@@ -1,0 +1,57 @@
+# ---------- secrets ----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---------- python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ---------- virtualenv ----------
+.venv/
+venv/
+env/
+
+# ---------- testing / tooling ----------
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# ---------- IDE / OS ----------
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# ---------- data & artifacts ----------
+# 大文件与受限材料不入库；需要时由成员 B 通过共享盘分发
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+*.pdf
+!docs/**/*.pdf
+
+# 运行产物
+*.db
+*.sqlite
+*.sqlite3
+logs/
+runs/
+outputs/
+.cache/
+
+# streamlit
+.streamlit/secrets.toml
