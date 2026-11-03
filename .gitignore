@@ -55,3 +55,9 @@ outputs/
 
 # streamlit
 .streamlit/secrets.toml
+
+# 飞书文档创作草稿（lark-cli init-draft 生成，本地保留即可）
+draft_*/
+
+# 本地 AI 协作缓存与笔记（不入组内共享仓库）
+.workbuddy-ai/
