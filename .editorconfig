@@ -1,0 +1,26 @@
+# 统一三人 IDE 的缩进、换行与编码，避免无意义的整文件 diff
+# PyCharm: Settings → Editor → Code Style → 勾选 "Enable EditorConfig support"
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{py,pyi}]
+indent_size = 4
+max_line_length = 100
+
+[*.{yml,yaml,json,toml}]
+indent_size = 2
+
+[*.md]
+# Markdown 里行尾双空格表示换行，不能自动裁掉
+trim_trailing_whitespace = false
+
+[*.{sql,sh}]
+indent_size = 4
