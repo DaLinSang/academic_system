@@ -116,12 +116,17 @@ uv run python -m app.demo -m B1 -q "比较 RAG 和 ReAct 的方法差异"
 
 ## 6. 开发约定
 
-- **Python 3.11 + uv**，不要用 conda / 系统 Python
-- **提交前**：`uv run pytest` 全绿 + `uv run ruff check .`
-- **分支**：`feat/<module>-<short-desc>`、`fix/<...>`；不直接推 main
-- **PR**：至少一人 review，模块作者不能自己合并
+完整规范见 **[CONTRIBUTING.md](CONTRIBUTING.md)**，变更历史见 **[CHANGELOG.md](CHANGELOG.md)**。三条最容易踩的先记住：
+
+- **不直接推 main**：一律开分支 + PR，至少一人 review
+- **提交信息**：`<type>(<scope>): <subject>`，如 `feat(retrieval): 实现 RRF 混合排序`
 - **绝不提交** `.env`、API key、真实数据
-- 每个模块目录必须有 README，与功能 PR 一起更新
+
+提交前跑一遍：
+
+```bash
+uv run pytest -q && uv run ruff check .
+```
 
 ## 7. 已知限制
 
