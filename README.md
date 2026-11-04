@@ -130,8 +130,8 @@ uv run pytest -q && uv run ruff check .
 
 ## 7. 已知限制
 
-- 当前全部是 Mock，检索与校验是关键词启发式，不是真实算法
+- 当前业务模块全部是 Mock：检索是关键词重合度，校验是词重叠率，都不是真实算法
 - 没有 PDF 上传入口（等 B 的 ingestion）
 - 没有 Web 界面（等 C 的 Streamlit）
-- 尚未接入真实 LLM（等 `app/llm/client.py`）
-- web_search 与代码执行工具未实现
+- LLM 层（`app/llm/client.py`）已实现，但 `.env` 未配 key 时自动退回 `MockLLM`
+- `web_search` 与代码执行工具未实现
