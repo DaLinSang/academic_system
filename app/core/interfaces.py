@@ -62,7 +62,7 @@ class Retriever(Protocol):
 
 @runtime_checkable
 class MemoryStore(Protocol):
-    """长期记忆的存取。B 的交付物，内部用 SQLite 还是 PostgreSQL 由 B 决定。
+    """长期记忆的存取。B 的交付物，内部用 PostgreSQL 由 B 决定。
 
     其他模块**不得**直接操作数据库，只能通过这五个方法。
     """

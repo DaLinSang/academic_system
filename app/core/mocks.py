@@ -277,7 +277,7 @@ class MockRetriever:
 
 
 class MockMemoryStore:
-    """内存版记忆存储。真实版本（阶段 2）由 B 用 SQLite/PostgreSQL 实现。"""
+    """内存版记忆存储。真实版本（阶段 2）由 B 用 PostgreSQL 实现。"""
 
     def __init__(self) -> None:
         self._items: dict[str, MemoryItem] = {}
