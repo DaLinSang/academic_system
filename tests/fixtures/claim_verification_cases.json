@@ -1,0 +1,26 @@
+[
+  {
+    "case_id": "supported_exact",
+    "claim": "RAG combines retrieved passages with a language model response.",
+    "evidence_text": "RAG combines retrieved passages with a language model response.",
+    "expected_status": "supported"
+  },
+  {
+    "case_id": "supported_chinese",
+    "claim": "Self-RAG 使用反思标记判断是否需要检索。",
+    "evidence_text": "Self-RAG 训练模型输出反思标记，用来判断当前问题是否需要检索。",
+    "expected_status": "supported"
+  },
+  {
+    "case_id": "partially_supported",
+    "claim": "The assistant stores user preferences and conversation summaries in PostgreSQL.",
+    "evidence_text": "The assistant stores user preferences for future conversations.",
+    "expected_status": "partially_supported"
+  },
+  {
+    "case_id": "unsupported",
+    "claim": "The system was released in 2019.",
+    "evidence_text": "The system uses hybrid retrieval and page citations.",
+    "expected_status": "unsupported"
+  }
+]
