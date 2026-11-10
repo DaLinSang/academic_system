@@ -5,7 +5,7 @@
 
 ## 1. 当前版本定位
 
-当前 PR 实现一个不依赖数据库和外部模型的内存关键词检索器：
+当前模块包含两个检索实现：
 
 ```text
 PDF
@@ -13,21 +13,19 @@ PDF
 app.ingestion.parse_pdf()
     ↓
 DocumentChunk
-    ↓
-KeywordRetriever
-    ↓
-关键词重合度排序
-    ↓
-Evidence
+    ├── KeywordRetriever：基础关键词匹配
+    └── BM25Retriever：正式 BM25 排序
+                 ↓
+              Evidence
 ```
 
-这是 retrieval 的最小可用版本，目的是先验证模块接口、页码引用和端到端数据流。
+`BM25Retriever` 是当前正式的文本检索实现。`KeywordRetriever` 保留用于基线比较、Mock 演示和回归测试。
 
 ## 2. 当前职责
 
 - 接收 ingestion 生成的 `DocumentChunk`；
 - 解析 PDF 并把 chunks 放入内存索引；
-- 根据 query 做简单关键词匹配；
+- 根据 query 做关键词匹配或 BM25 排序；
 - 按相关分数从高到低返回结果；
 - 将 `DocumentChunk` 转换成公共结构 `Evidence`；
 - 保留 `chunk_id`、`file_name` 和 `page_number`；
@@ -39,7 +37,6 @@ Evidence
 
 - PostgreSQL / pgvector；
 - Ollama 或其他 embedding 模型；
-- BM25；
 - RRF 混合排序；
 - Agent 路由和回答生成；
 - Claim Verification。
@@ -47,9 +44,9 @@ Evidence
 ## 4. 公共调用方式
 
 ```python
-from app.retrieval import KeywordRetriever
+from app.retrieval import BM25Retriever
 
-retriever = KeywordRetriever()
+retriever = BM25Retriever()
 count = retriever.index_document("data/raw/demo.pdf", document_id="demo-paper")
 evidence = retriever.retrieve("retrieval augmented generation", top_k=5)
 ```
@@ -62,15 +59,27 @@ evidence = retriever.retrieve("retrieval augmented generation", top_k=5)
 list[Evidence]
 ```
 
-## 5. 分数规则
+## 5. BM25 分数规则
 
-当前分数是 query 中命中的不同 token 数量除以 query token 总数：
+`BM25Retriever` 使用 `rank_bm25.BM25Okapi` 对所有已导入 chunks 建立内存索引。返回结果按 BM25 score 降序排列：
 
 ```text
-score = matched_query_tokens / total_query_tokens
+query
+    ↓
+tokenize
+    ↓
+BM25Okapi.get_scores()
+    ↓
+Evidence(score=BM25 score)
 ```
 
-当前版本使用 `RetrievalMethod.MOCK` 表示阶段性内存检索。后续真正接入 BM25 后，检索方法会改为 `RetrievalMethod.BM25`。
+BM25 结果使用：
+
+```python
+RetrievalMethod.BM25
+```
+
+关键词基线使用 `RetrievalMethod.MOCK`，两者不能混淆。
 
 ## 6. 错误和边界行为
 
@@ -90,12 +99,11 @@ uv run pytest -q
 uv run ruff check .
 ```
 
-测试覆盖正常检索、无命中、`top_k`、空 query、页码保留、PDF 导入和重复导入。
+测试覆盖 BM25 正常检索、无命中、`top_k`、空 query、页码保留、PDF 导入和重复导入。
 
 ## 8. 后续计划
 
-1. 用 BM25 替换当前关键词重合度；
-2. 增加 embedding 和 pgvector 索引；
-3. 融合 BM25 与向量结果；
-4. 使用 RRF 生成最终排序；
-5. 增加真实 PDF 和数据库集成测试。
+1. 增加 embedding 和 pgvector 索引；
+2. 融合 BM25 与向量结果；
+3. 使用 RRF 生成最终排序；
+4. 增加真实 PDF 和数据库集成测试。
