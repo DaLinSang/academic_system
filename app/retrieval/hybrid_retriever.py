@@ -95,8 +95,7 @@ class HybridRetriever:
     ) -> int:
         """Parse, embed, and upsert one PDF into the vector index."""
         chunks = parse_pdf(pdf_path, document_id=document_id)
-        if not chunks:
-            return 0
+        resolved_document_id = document_id or Path(pdf_path).stem
 
         try:
             rows = [
@@ -115,6 +114,10 @@ class HybridRetriever:
 
             with self._connect() as conn:
                 with conn.cursor() as cursor:
+                    cursor.execute(
+                        "DELETE FROM document_chunks WHERE document_id = %s",
+                        (resolved_document_id,),
+                    )
                     cursor.executemany(
                         """
                         INSERT INTO document_chunks
@@ -138,7 +141,8 @@ class HybridRetriever:
         except Exception as exc:
             raise RetrievalError(f"Failed to index document: {exc}") from exc
 
-        self._bm25._replace_document_chunks(chunks)
+        self._bm25._documents[resolved_document_id] = chunks
+        self._bm25._rebuild_index()
         return len(chunks)
 
     def _vector_results(
