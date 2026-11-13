@@ -32,6 +32,14 @@
   - 降级：模型不可用时返回带页码的原文摘录，保证 Demo 不出现空白页
 - 模块文档 `app/agent/README.md`
 - 测试 `tests/test_answer_generator.py`（18 项）
+- **任务规划器**（`app/planning/planner.py`）
+  - `LLMPlanner`：单次 LLM 调用把复杂请求拆成 2–5 步，temperature 固定为 0
+  - 仅 `complex_task` 触发拆解，其余两类返回空列表且不消耗模型调用
+  - 步骤编号重排为 1..n，并按原编号映射翻译 `depends_on`，避免依赖关系失效
+  - 检索步骤缺 `query` 时补原问题，防止该步骤白拆
+  - 降级：解析失败 / 调用失败 / 空数组一律返回最小两步计划，不返回空
+- 模块文档 `app/planning/README.md`
+- 测试 `tests/test_planner.py`（21 项）
 - 协作规范 `CONTRIBUTING.md`：分支、提交、版本、PR、Issue、代码规范与实验复现规则
 - 编辑一致性配置 `.editorconfig`，统一三人 IDE 的缩进与换行
 
