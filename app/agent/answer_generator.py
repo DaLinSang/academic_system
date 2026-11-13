@@ -1,0 +1,218 @@
+"""基于检索证据生成带页码引用的回答（A 负责）。
+
+职责边界
+--------
+**只负责"把证据变成人话"**，不负责检索、不负责校验、不负责编排。
+
+输入：`AgentState`（已填好 `question` / `evidence` / `route` / `memory_context`）
+输出：一段带 `[n]` 引用标记的中文回答
+
+三条路径
+--------
+1. **direct**（无证据）：用模型自身知识回答。这条路径的存在本身很重要——
+   RQ1 要区分"该检索"和"不该检索"，如果 direct 也强行检索，这个区分就消失了。
+2. **有证据**：把证据编号后拼进 prompt，要求模型只用证据作答，每条事实标引用。
+3. **无证据但需要证据**：明确告知"资料不足"，而不是让模型编一个看起来合理的答案。
+   这是 Proposal 里 "explicit uncertainty when evidence is missing" 的落地点。
+
+为什么引用编号必须在 prompt 之前就固定
+--------------------------------------
+Orchestrator 在调用本模块后立即执行 `state.build_citations()`，把 evidence 按顺序
+编成 `[1] [2] ...`。如果生成时用的编号和 citations 的编号不一致，用户点引用就会跳错页。
+所以这里**只按 `state.evidence` 的当前顺序编号**，不做任何重排。
+
+引用质量如何观测（给 C 的评测用）
+--------------------------------
+模型可能编出超出范围的编号（比如只有 3 条证据却写 `[7]`）。这类越界引用正是
+"citation precision" 的失败样本，**不能静默删掉**，否则评测看不到问题。
+因此这里保留原文，只把越界编号记进 `trace`：
+
+    state.log("generate", "citation_audit", used=[1, 3], invalid=[7])
+"""
+
+from __future__ import annotations
+
+import re
+
+from app.core.interfaces import LLM
+from app.core.types import AgentState
+
+__all__ = ["LLMAnswerGenerator", "NO_EVIDENCE_MESSAGE", "extract_citation_indices"]
+
+NO_EVIDENCE_MESSAGE = (
+    "我在已上传的文档里没有检索到与这个问题相关的内容，因此无法给出有依据的回答。\n\n"
+    "可能的原因：① 相关文档还没有导入；② 问题里的术语与文档用词差异较大。\n"
+    "如果你希望我基于通用知识回答，可以明确说明「不用查文档」。"
+)
+
+_CITATION_PATTERN = re.compile(r"\[(\d+)\]")
+
+_SYSTEM_PROMPT = """你是学术知识助手。根据给定的证据回答用户问题。
+
+规则：
+1. 每一条事实陈述后面必须标注来源编号，格式为 [1]、[2]，编号必须来自给定证据。
+2. 只能使用证据中出现的信息。证据里没有的内容不要补充，即使你知道答案。
+3. 如果证据不足以回答问题，明确说明"现有资料不足以回答"，并指出缺少什么信息。
+4. 如果多个证据互相矛盾，分别陈述各自的说法并指出矛盾，不要合并成一个确定结论。
+5. 用中文回答，结构清晰。不要复述这些规则，不要输出"根据规则"之类的话。
+6. 不要在开头写"根据检索到的文档"这类引导语，直接给结论。"""
+
+_DIRECT_SYSTEM_PROMPT = """你是学术知识助手。用户的问题不需要检索其个人文档，请直接回答。
+
+规则：
+1. 用中文回答，结构清晰。
+2. 如果问题涉及你不确定的事实，明确说明不确定性，不要编造。
+3. 如果这个问题其实需要用户自己的文档才能回答，在回答末尾提示用户上传相关材料。
+4. 不要在开头写引导语，直接给结论。"""
+
+
+def extract_citation_indices(text: str) -> list[int]:
+    """按出现顺序取出答案里的引用编号（去重）。"""
+    seen: list[int] = []
+    for match in _CITATION_PATTERN.finditer(text):
+        index = int(match.group(1))
+        if index not in seen:
+            seen.append(index)
+    return seen
+
+
+class LLMAnswerGenerator:
+    """实现 `app.core.interfaces.AnswerGenerator`。"""
+
+    def __init__(
+        self,
+        llm: LLM,
+        temperature: float = 0.0,
+        max_evidence: int = 6,
+        max_chars_per_evidence: int = 700,
+    ) -> None:
+        if max_evidence < 1:
+            raise ValueError("max_evidence 至少为 1")
+        if max_chars_per_evidence < 50:
+            raise ValueError("max_chars_per_evidence 太小，会导致证据被截得没有信息量")
+        self.llm = llm
+        self.temperature = temperature
+        self.max_evidence = max_evidence
+        self.max_chars_per_evidence = max_chars_per_evidence
+
+    # ------------------------------------------------------------------ #
+    def generate(self, state: AgentState) -> str:
+        if not state.evidence:
+            return self._generate_without_evidence(state)
+        return self._generate_from_evidence(state)
+
+    # ------------------------------------------------------------------ #
+    # 路径 1：direct / 无证据
+    # ------------------------------------------------------------------ #
+    def _generate_without_evidence(self, state: AgentState) -> str:
+        is_direct = state.route is not None and state.route.is_direct
+
+        if not is_direct:
+            # 需要证据却没检索到：不要编，直接说清楚
+            state.log("generate", "no_evidence", route=state.route.route if state.route else None)
+            return NO_EVIDENCE_MESSAGE
+
+        try:
+            response = self.llm.generate(
+                [
+                    {"role": "system", "content": _DIRECT_SYSTEM_PROMPT},
+                    {"role": "user", "content": self._direct_prompt(state)},
+                ],
+                temperature=self.temperature,
+            )
+        except Exception as exc:  # noqa: BLE001 - 生成失败要降级，不能炸掉请求
+            state.log("generate", "error", error=f"{type(exc).__name__}: {exc}")
+            return f"抱歉，模型调用失败（{type(exc).__name__}），本次无法回答。"
+
+        state.usage = state.usage.add(response.usage)
+        return response.text.strip() or "模型没有返回有效内容。"
+
+    # ------------------------------------------------------------------ #
+    # 路径 2：有证据
+    # ------------------------------------------------------------------ #
+    def _generate_from_evidence(self, state: AgentState) -> str:
+        try:
+            response = self.llm.generate(
+                [
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "user", "content": self._grounded_prompt(state)},
+                ],
+                temperature=self.temperature,
+            )
+        except Exception as exc:  # noqa: BLE001
+            state.log("generate", "error", error=f"{type(exc).__name__}: {exc}")
+            return self._fallback_from_evidence(state)
+
+        state.usage = state.usage.add(response.usage)
+        answer = response.text.strip()
+
+        if not answer:
+            state.log("generate", "empty_response")
+            return self._fallback_from_evidence(state)
+
+        self._audit_citations(state, answer)
+        return answer
+
+    # ------------------------------------------------------------------ #
+    # 提示词构造
+    # ------------------------------------------------------------------ #
+    def _format_evidence(self, state: AgentState) -> str:
+        blocks: list[str] = []
+        for index, item in enumerate(state.evidence[: self.max_evidence], start=1):
+            text = re.sub(r"\s+", " ", item.text).strip()
+            if len(text) > self.max_chars_per_evidence:
+                text = text[: self.max_chars_per_evidence].rstrip() + "…"
+            blocks.append(
+                f"[{index}] 来源：{item.file_name} 第 {item.page_number} 页\n{text}"
+            )
+        return "\n\n".join(blocks)
+
+    def _format_preferences(self, state: AgentState) -> str:
+        if not state.memory_context:
+            return ""
+        lines = [f"- {item.content}" for item in state.memory_context[:5]]
+        return "\n用户长期偏好（仅影响表达方式，不影响事实内容）：\n" + "\n".join(lines)
+
+    def _grounded_prompt(self, state: AgentState) -> str:
+        return (
+            f"证据：\n\n{self._format_evidence(state)}\n"
+            f"{self._format_preferences(state)}\n\n"
+            f"用户问题：{state.question}"
+        )
+
+    def _direct_prompt(self, state: AgentState) -> str:
+        return f"{state.question}{self._format_preferences(state)}"
+
+    # ------------------------------------------------------------------ #
+    # 引用审计与降级
+    # ------------------------------------------------------------------ #
+    def _audit_citations(self, state: AgentState, answer: str) -> None:
+        """记录引用使用情况，供 C 计算 citation precision / recall。
+
+        越界编号不删除——它本身就是"引用不可靠"的证据，删了评测就看不见了。
+        """
+        used = extract_citation_indices(answer)
+        upper_bound = min(len(state.evidence), self.max_evidence)
+        invalid = [index for index in used if index < 1 or index > upper_bound]
+        state.log(
+            "generate",
+            "citation_audit",
+            used=used,
+            invalid=invalid,
+            evidence_count=len(state.evidence),
+        )
+
+    def _fallback_from_evidence(self, state: AgentState) -> str:
+        """模型不可用时的兜底：把证据原文按页列出。
+
+        这样即使 API 挂了，用户仍能看到"在哪一页有什么内容"，
+        Demo 现场不会出现空白页。质量不如模型生成，但可用。
+        """
+        state.log("generate", "fallback_to_extract")
+        lines = ["模型暂时不可用，以下是检索到的原文片段，供你直接查阅：", ""]
+        for index, item in enumerate(state.evidence[: self.max_evidence], start=1):
+            text = re.sub(r"\s+", " ", item.text).strip()
+            if len(text) > 200:
+                text = text[:200].rstrip() + "…"
+            lines.append(f"[{index}] {item.file_name} 第 {item.page_number} 页：{text}")
+        return "\n".join(lines)
