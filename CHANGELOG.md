@@ -15,12 +15,27 @@
 
 ### Added
 
+- **LLM 路由器**（`app/routing/router.py`）
+  - `LLMRouter`：单次 LLM 调用做三分类（direct / document_retrieval / complex_task），temperature 固定为 0 保证可复现
+  - `RuleBasedRouter`：纯关键词基线，用于对照「用模型做路由是否值得」
+  - JSON 解析容错：支持 json 围栏、前后夹带解释、括号内含花括号的字符串
+  - 三类归一化：消除模型自相矛盾输出（direct 不检索、document_retrieval 必检索、complex_task 必规划）
+  - 两级降级：JSON 解析失败或模型调用失败均回退关键词启发式，绝不抛异常
+  - `last_usage` 暴露本次路由的 token 与成本，由 Orchestrator 归集
+- 模块文档 `app/routing/README.md`
+- 测试 `tests/test_router.py`（27 项）
 - 协作规范 `CONTRIBUTING.md`：分支、提交、版本、PR、Issue、代码规范与实验复现规则
 - 编辑一致性配置 `.editorconfig`，统一三人 IDE 的缩进与换行
 
 ### Changed
 
+- `app/agent/orchestrator.py`：新增 `_absorb_usage()`，回收 Router 内部产生的 token 与成本，避免 RQ4 统计偏低
+- 路由启发式关键词收紧：移除「什么是 / 定义 / 提到」等泛化词，避免把概念性问题误判为需要检索，抬高 RQ1 的不必要检索率
 - `app/core/interfaces.py`、`app/core/mocks.py`：记忆存储方案表述由「SQLite/PostgreSQL」明确为 PostgreSQL + pgvector
+
+### Fixed
+
+- `.gitignore` 增加 `.pytest_tmp/`
 
 ---
 

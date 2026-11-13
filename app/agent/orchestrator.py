@@ -224,6 +224,7 @@ class Orchestrator:
                     has_documents=True,
                     memory_context=state.memory_context,
                 )
+                self._absorb_usage(state, self.router)
                 state.route = route
                 state.log("router", "end", route=str(route.route), reason=route.reason)
                 return route
@@ -287,6 +288,23 @@ class Orchestrator:
             except Exception as exc:  # noqa: BLE001
                 state.errors.append(f"memory_write: {type(exc).__name__}: {exc}")
                 state.log("memory_write", "error", error=str(exc))
+
+    # ------------------------------------------------------------------ #
+    # 用量归集
+    # ------------------------------------------------------------------ #
+    def _absorb_usage(self, state: AgentState, component: object) -> None:
+        """把组件内部产生的 token / 成本累加进 state。
+
+        背景：`Router.route()` 的签名（契约已冻结）不接收 `AgentState`，
+        但它在内部确实调用了一次 LLM。若不在这里回收，RQ4 的成本与延迟
+        统计会系统性偏低，B1–B4 的对比就失真了。
+
+        约定：组件若自己调过模型，就把本次用量放在 `last_usage` 属性上。
+        Mock 没有这个属性，`getattr` 返回 None，静默跳过。
+        """
+        usage = getattr(component, "last_usage", None)
+        if isinstance(usage, Usage):
+            state.usage = state.usage.add(usage)
 
     # ------------------------------------------------------------------ #
     # 最终答案组装
