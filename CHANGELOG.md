@@ -24,6 +24,14 @@
   - `last_usage` 暴露本次路由的 token 与成本，由 Orchestrator 归集
 - 模块文档 `app/routing/README.md`
 - 测试 `tests/test_router.py`（27 项）
+- **基于证据的回答生成**（`app/agent/answer_generator.py`）
+  - `LLMAnswerGenerator`：把编号后的证据拼进提示词，要求每条事实标注 `[n]` 引用
+  - 三条路径：direct 用模型自身知识 / 有证据走 grounded 生成 / 需要证据但无证据时明确拒答
+  - 无证据时**不调用模型**，从源头杜绝幻觉
+  - 引用审计：越界编号保留原文并记入 `trace`，作为 citation precision 的失败样本
+  - 降级：模型不可用时返回带页码的原文摘录，保证 Demo 不出现空白页
+- 模块文档 `app/agent/README.md`
+- 测试 `tests/test_answer_generator.py`（18 项）
 - 协作规范 `CONTRIBUTING.md`：分支、提交、版本、PR、Issue、代码规范与实验复现规则
 - 编辑一致性配置 `.editorconfig`，统一三人 IDE 的缩进与换行
 
@@ -32,6 +40,7 @@
 - `app/agent/orchestrator.py`：新增 `_absorb_usage()`，回收 Router 内部产生的 token 与成本，避免 RQ4 统计偏低
 - 路由启发式关键词收紧：移除「什么是 / 定义 / 提到」等泛化词，避免把概念性问题误判为需要检索，抬高 RQ1 的不必要检索率
 - `app/core/interfaces.py`、`app/core/mocks.py`：记忆存储方案表述由「SQLite/PostgreSQL」明确为 PostgreSQL + pgvector
+- `CONTRIBUTING.md`：PR 大小限制明确为「实现代码 ≤400 行，测试与文档不计入」
 
 ### Fixed
 
