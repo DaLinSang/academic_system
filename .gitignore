@@ -61,3 +61,6 @@ draft_*/
 
 # 本地 AI 协作缓存与笔记（不入组内共享仓库）
 .workbuddy-ai/
+
+# pytest 临时目录（沙箱环境下指定 basetemp 用）
+.pytest_tmp/
