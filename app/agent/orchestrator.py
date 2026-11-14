@@ -153,6 +153,7 @@ class Orchestrator:
             with self._stage(state, "plan") as ok:
                 if ok:
                     state.plan = self.planner.plan(question, route, state.memory_context)
+                    self._absorb_usage(state, self.planner)
                     state.log("plan", "end", steps=len(state.plan))
 
         # 4) 工具执行（当前只有检索；web_search 与代码执行留给后续迭代）

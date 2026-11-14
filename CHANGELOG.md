@@ -40,12 +40,19 @@
   - 降级：解析失败 / 调用失败 / 空数组一律返回最小两步计划，不返回空
 - 模块文档 `app/planning/README.md`
 - 测试 `tests/test_planner.py`（21 项）
+- **阶段 1 真实装配**（`app/agent/factory.py`）
+  - `build_stage1_orchestrator()`：LLM 路由 + LLM 规划 + 混合检索(B) + 词法校验(C) + LLM 生成
+  - 记忆仍接 Mock，等 B 交付 `MemoryStore` 后只改这一行
+  - 延迟导入真实模块，保证 `build_mock_orchestrator()` 不依赖 psycopg / httpx
+- `app/demo.py` 新增 `--real`，与 Mock 模式共用同一套 Orchestrator
+- `scripts/index_pdfs.py`：批量把 PDF 索引进 pgvector，支持 `--dir` / `--limit` / `--list`
+- 测试 `tests/test_factory.py`（11 项）：装配正确性、构造不连库、检索失败降级、用量归集
 - 协作规范 `CONTRIBUTING.md`：分支、提交、版本、PR、Issue、代码规范与实验复现规则
 - 编辑一致性配置 `.editorconfig`，统一三人 IDE 的缩进与换行
 
 ### Changed
 
-- `app/agent/orchestrator.py`：新增 `_absorb_usage()`，回收 Router 内部产生的 token 与成本，避免 RQ4 统计偏低
+- `app/agent/orchestrator.py`：`_absorb_usage()` 现在同时回收 Router 与 Planner 内部产生的 token 与成本，避免 RQ4 统计偏低
 - 路由启发式关键词收紧：移除「什么是 / 定义 / 提到」等泛化词，避免把概念性问题误判为需要检索，抬高 RQ1 的不必要检索率
 - `app/core/interfaces.py`、`app/core/mocks.py`：记忆存储方案表述由「SQLite/PostgreSQL」明确为 PostgreSQL + pgvector
 - `CONTRIBUTING.md`：PR 大小限制明确为「实现代码 ≤400 行，测试与文档不计入」

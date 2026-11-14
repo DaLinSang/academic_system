@@ -58,6 +58,24 @@ docker compose up -d          # pgvector:pg16，端口 5434
 docker compose logs -f postgres
 ```
 
+### 跑真实链路（需 API key + 数据库）
+
+```bash
+# 1) 起数据库
+docker compose up -d
+
+# 2) 把 PDF 放进 data/raw，然后索引进 pgvector
+uv run python scripts/index_pdfs.py
+uv run python scripts/index_pdfs.py --list      # 先看看有哪些文件
+
+# 3) 用真实模块跑（LLM 路由/规划/生成 + 混合检索 + 词法校验）
+uv run python -m app.demo --real
+uv run python -m app.demo --real -m B2 -q "讲义里 RRF 是怎么算的？"
+```
+
+`--real` 与默认的 Mock 模式用的是**同一套 Orchestrator**，只是注入的实现不同。
+没有配 key 时会自动退回 `MockLLM`，路由与规划走关键词降级，链路仍可跑通。
+
 用 5434 是为了避开本机其它项目的 5432/5433。
 
 ## 3. 仓库结构
@@ -130,8 +148,11 @@ uv run pytest -q && uv run ruff check .
 
 ## 7. 已知限制
 
-- 当前业务模块全部是 Mock：检索是关键词重合度，校验是词重叠率，都不是真实算法
-- 没有 PDF 上传入口（等 B 的 ingestion）
-- 没有 Web 界面（等 C 的 Streamlit）
-- LLM 层（`app/llm/client.py`）已实现，但 `.env` 未配 key 时自动退回 `MockLLM`
+- **记忆仍是 Mock**：`MemoryStore` 真实实现待成员 B 交付，`MemoryManager` 仍是规则版。
+  B3/B4 的记忆对比实验暂不可信
+- **向量检索存在已知 bug**：`<=>` 参数缺少 `::vector` 转换，见
+  [#14](https://github.com/DaLinSang/academic_system/issues/14)。修复前混合检索实际只剩 BM25 一路
+- 没有 PDF 上传入口（UI 层待成员 C 的 Streamlit）
+- 没有 Web 界面（待成员 C）
 - `web_search` 与代码执行工具未实现
+- Planner 的 `tool="llm"` 步骤只说明意图，不做真实的多轮 ReAct 执行

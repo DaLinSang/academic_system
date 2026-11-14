@@ -1,13 +1,14 @@
-"""阶段 0 的端到端演示：用 Mock 跑通整条链路。
+"""端到端演示：从问题到带引用、带校验状态的答案。
 
 运行：
-    uv run python -m app.demo
-    uv run python -m app.demo --mode B4 --question "比较 RAG 和 ReAct 的区别"
-    uv run python -m app.demo --mode B1
+    uv run python -m app.demo                      # 全 Mock，无需 key 与数据库
+    uv run python -m app.demo --mode B1            # 换基线
+    uv run python -m app.demo --real               # 真实模块（需 key + pgvector）
+    uv run python -m app.demo --real -m B2 -q "..."  # 真实模块 + 指定模式
 
-它验证的是分工文档里阶段 0 的验收项：
-    用户问题 → Mock Router → Mock Retriever → Mock LLM Response
-             → Mock Verifier → 返回答案、引用和验证状态
+Mock 模式验证的是阶段 0 的验收项；--real 模式验证的是阶段 1 的集成：
+    用户问题 → Router(LLM) → Planner(LLM) → 混合检索(B)
+             → AnswerGenerator(LLM) → Verifier(C) → 答案 + 页码 + 校验状态
 """
 
 from __future__ import annotations
@@ -15,7 +16,6 @@ from __future__ import annotations
 import argparse
 import sys
 
-from app.agent.factory import build_mock_orchestrator
 from app.agent.orchestrator import MODE_PRESETS
 from app.core.types import AgentState, ClaimStatus
 
@@ -135,7 +135,7 @@ def render(state: AgentState) -> None:
 # 入口
 # --------------------------------------------------------------------------- #
 def main() -> int:
-    parser = argparse.ArgumentParser(description="阶段 0 Mock 端到端演示")
+    parser = argparse.ArgumentParser(description="端到端演示（默认全 Mock，--real 走真实模块）")
     parser.add_argument("--question", "-q", default="讲义里 Self-RAG 是怎么决定要不要检索的？")
     parser.add_argument(
         "--mode",
@@ -145,12 +145,38 @@ def main() -> int:
         help="B1=直接回答  B2=普通RAG  B3=RAG+记忆  B4=完整Agent",
     )
     parser.add_argument("--top-k", type=int, default=3)
+    parser.add_argument(
+        "--real",
+        action="store_true",
+        help="用真实模块（LLM 路由/规划/生成 + 混合检索 + 词法校验）。"
+        "需要 .env 配好 key、pgvector 已启动且已导入文档",
+    )
     args = parser.parse_args()
 
-    orch = build_mock_orchestrator(top_k=args.top_k)
-    flags = MODE_PRESETS[args.mode]
+    if args.real:
+        from app.agent.factory import build_stage1_orchestrator
+        from app.core.config import settings
 
-    print(bold(f"\n  Mock 端到端流程  ·  模式 {args.mode}  ·  {flags}"))
+        orch = build_stage1_orchestrator(top_k=args.top_k)
+        api_key, base_url, model = settings.llm.resolve()
+        print(bold("\n  真实链路  ·  模式 " + args.mode))
+        if not api_key:
+            print(
+                f"  {yellow('!')} 未配置 API key，模型已退回 MockLLM；"
+                "路由/规划会走关键词降级"
+            )
+        else:
+            print(f"  模型：{model} @ {base_url}")
+        print("  提示：若检索为空，先运行 uv run python scripts/index_pdfs.py")
+    else:
+        from app.agent.factory import build_mock_orchestrator
+
+        orch = build_mock_orchestrator(top_k=args.top_k)
+        print(bold(f"\n  Mock 端到端流程  ·  模式 {args.mode}"))
+
+    flags = MODE_PRESETS[args.mode]
+    print(f"  开关：{flags}")
+
     state = orch.run(args.question, session_id="demo", user_id="demo-user", **flags)
     render(state)
 
