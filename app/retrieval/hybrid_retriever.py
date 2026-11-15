@@ -11,7 +11,7 @@ from pgvector.psycopg import register_vector
 
 from app.core.config import settings
 from app.core.errors import RetrievalError
-from app.core.types import Evidence, RetrievalMethod
+from app.core.types import DocumentChunk, Evidence, RetrievalMethod
 from app.ingestion.pdf_parser import parse_pdf
 from app.retrieval.bm25_retriever import BM25Retriever, _tokenize
 
@@ -74,6 +74,7 @@ class HybridRetriever:
         self.bm25_weight = bm25_weight
         self.vector_weight = vector_weight
         self._bm25 = BM25Retriever()
+        self._bm25_loaded = False
 
     def _ensure_schema(self, conn: psycopg.Connection) -> None:
         schema_path = Path(__file__).with_name("schema.sql")
@@ -87,6 +88,41 @@ class HybridRetriever:
             return conn
         except Exception as exc:
             raise RetrievalError(f"Retrieval database is unavailable: {exc}") from exc
+
+    def _load_bm25_index(self) -> None:
+        """Load persisted chunks once so BM25 works across process restarts."""
+        if self._bm25_loaded:
+            return
+
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT chunk_id, document_id, file_name, page_number,
+                           text, char_start, char_end
+                    FROM document_chunks
+                    ORDER BY document_id, page_number, char_start, chunk_id
+                    """
+                ).fetchall()
+        except RetrievalError:
+            raise
+        except Exception as exc:
+            raise RetrievalError(f"Failed to load BM25 corpus: {exc}") from exc
+
+        chunks = [
+            DocumentChunk(
+                chunk_id=row[0],
+                document_id=row[1],
+                file_name=row[2],
+                page_number=row[3],
+                text=row[4],
+                char_start=row[5],
+                char_end=row[6],
+            )
+            for row in rows
+        ]
+        self._bm25 = BM25Retriever(chunks)
+        self._bm25_loaded = True
 
     def index_document(
         self,
@@ -154,9 +190,9 @@ class HybridRetriever:
             with self._connect() as conn:
                 rows = conn.execute(
                     """
-                    SELECT chunk_id, 1 - (embedding <=> %s) AS score
+                    SELECT chunk_id, 1 - (embedding <=> %s::vector) AS score
                     FROM document_chunks
-                    ORDER BY embedding <=> %s
+                    ORDER BY embedding <=> %s::vector
                     LIMIT %s
                     """,
                     (query_embedding, query_embedding, limit),
@@ -172,6 +208,7 @@ class HybridRetriever:
         if top_k <= 0 or not _tokenize(query):
             return []
 
+        self._load_bm25_index()
         bm25_results = self._bm25.retrieve(query, top_k=max(top_k * 4, 20))
         vector_results = self._vector_results(
             self.embedder.embed(query),
