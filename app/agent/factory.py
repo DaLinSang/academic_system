@@ -29,7 +29,7 @@ from app.core.mocks import (
     MockVerifier,
 )
 
-__all__ = ["build_mock_orchestrator", "build_orchestrator"]
+__all__ = ["build_mock_orchestrator", "build_orchestrator", "build_stage1_orchestrator"]
 
 
 def build_orchestrator(
@@ -68,6 +68,43 @@ def build_mock_orchestrator(top_k: int = 5) -> Orchestrator:
         memory_manager=MockMemoryManager(),
         verifier=MockVerifier(),
         answer_generator=MockAnswerGenerator(llm),
+        llm=llm,
+        top_k=top_k,
+    )
+
+
+def build_stage1_orchestrator(top_k: int = 5) -> Orchestrator:
+    """阶段 1 的真实装配：能跑真模型的链路。
+
+    真实：Router（LLM）、Planner（LLM）、Retriever（B 的混合检索）、
+          Verifier（C 的词法校验）、AnswerGenerator（LLM）
+    仍为 Mock：MemoryStore（B 尚未交付真实实现）、MemoryManager（规则版）
+
+    前置条件：
+      - `.env` 里配好 API key，否则 `get_llm()` 会退回 `MockLLM`，
+        路由与规划会自动走关键词降级，链路仍能跑但质量等同 Mock
+      - pgvector 已启动，且已用 `scripts/index_pdfs.py` 导入文档，
+        否则检索返回空、回答会明确告知"资料不足"
+
+    这里用函数内延迟导入：`build_mock_orchestrator()` 是阶段 0 的入口，
+    不应该因为 psycopg / httpx 之类的依赖而变得不可用。
+    """
+    from app.agent.answer_generator import LLMAnswerGenerator
+    from app.llm.client import get_llm
+    from app.planning.planner import LLMPlanner
+    from app.retrieval import HybridRetriever
+    from app.routing.router import LLMRouter
+    from app.verification import LexicalVerifier
+
+    llm = get_llm()
+    return build_orchestrator(
+        router=LLMRouter(llm),
+        planner=LLMPlanner(llm),
+        retriever=HybridRetriever(),
+        memory_store=MockMemoryStore(),
+        memory_manager=MockMemoryManager(),
+        verifier=LexicalVerifier(),
+        answer_generator=LLMAnswerGenerator(llm),
         llm=llm,
         top_k=top_k,
     )
