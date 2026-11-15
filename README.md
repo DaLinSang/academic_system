@@ -35,7 +35,10 @@ cp .env.example .env        # 填入 DEEPSEEK_API_KEY，不填也能跑 Mock
 # 3) 跑通阶段 0 的 Mock 全链路（无需 API key、无需数据库）
 uv run python -m app.demo
 
-# 4) 跑测试
+# 4) 启动 Member C 的 Streamlit 页面（默认 Mock，可直接演示）
+uv run streamlit run streamlit_app.py
+
+# 5) 跑测试
 uv run pytest -v
 ```
 
@@ -150,7 +153,7 @@ uv run pytest -q && uv run ruff check .
 
 - **长期记忆**：真实装配使用 PostgreSQL/pgvector 存取、Ollama embedding 检索；
   写入候选仍由保守规则筛选，复杂的跨轮归纳与冲突消解尚未实现。详见 [Memory 模块说明](app/memory/README.md)
-- 没有 PDF 上传入口（UI 层待成员 C 的 Streamlit）
-- 没有 Web 界面（待成员 C）
+- Streamlit 已提供 PDF 上传入口，但 Real 模式导入仍要求 PostgreSQL、Ollama 正常运行
+- Web 界面目前是第一版，固定 Demo 数据和 B1-B4 实验结果页仍待补充
 - `web_search` 与代码执行工具未实现
 - Planner 的 `tool="llm"` 步骤只说明意图，不做真实的多轮 ReAct 执行
