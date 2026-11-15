@@ -42,6 +42,7 @@ class OllamaEmbedder:
                 f"{self.base_url}/api/embeddings",
                 json={"model": self.model, "prompt": text},
                 timeout=self.timeout,
+                trust_env=False,
             )
             response.raise_for_status()
             embedding = response.json().get("embedding")

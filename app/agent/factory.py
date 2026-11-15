@@ -77,8 +77,9 @@ def build_stage1_orchestrator(top_k: int = 5) -> Orchestrator:
     """阶段 1 的真实装配：能跑真模型的链路。
 
     真实：Router（LLM）、Planner（LLM）、Retriever（B 的混合检索）、
+          MemoryStore（B 的 PostgreSQL + 向量检索）、
           Verifier（C 的词法校验）、AnswerGenerator（LLM）
-    仍为 Mock：MemoryStore（B 尚未交付真实实现）、MemoryManager（规则版）
+    记忆候选由保守规则筛选；A 可按公共接口替换为更强的策略。
 
     前置条件：
       - `.env` 里配好 API key，否则 `get_llm()` 会退回 `MockLLM`，
@@ -91,6 +92,7 @@ def build_stage1_orchestrator(top_k: int = 5) -> Orchestrator:
     """
     from app.agent.answer_generator import LLMAnswerGenerator
     from app.llm.client import get_llm
+    from app.memory import PostgresMemoryStore, RuleBasedMemoryManager
     from app.planning.planner import LLMPlanner
     from app.retrieval import HybridRetriever
     from app.routing.router import LLMRouter
@@ -101,8 +103,8 @@ def build_stage1_orchestrator(top_k: int = 5) -> Orchestrator:
         router=LLMRouter(llm),
         planner=LLMPlanner(llm),
         retriever=HybridRetriever(),
-        memory_store=MockMemoryStore(),
-        memory_manager=MockMemoryManager(),
+        memory_store=PostgresMemoryStore(),
+        memory_manager=RuleBasedMemoryManager(),
         verifier=LexicalVerifier(),
         answer_generator=LLMAnswerGenerator(llm),
         llm=llm,

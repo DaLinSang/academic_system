@@ -27,6 +27,7 @@ from app.core.mocks import (
     MockVerifier,
 )
 from app.core.types import PlanStep, Usage
+from app.memory import PostgresMemoryStore, RuleBasedMemoryManager
 from app.planning.planner import LLMPlanner
 from app.retrieval import HybridRetriever
 from app.routing.router import LLMRouter, RuleBasedRouter
@@ -58,7 +59,7 @@ def test_mock_orchestrator_runs_without_key_or_database():
 # 真实装配
 # --------------------------------------------------------------------------- #
 def test_build_stage1_wires_real_components():
-    """真实模块必须真的接上，Mock 只允许留在记忆两处。"""
+    """真实模块必须接上，包括长期记忆存取与规则筛选。"""
     orch = build_stage1_orchestrator()
 
     assert isinstance(orch.router, LLMRouter)
@@ -67,9 +68,8 @@ def test_build_stage1_wires_real_components():
     assert isinstance(orch.verifier, LexicalVerifier)
     assert isinstance(orch.answer_generator, LLMAnswerGenerator)
 
-    # 记忆仍为 Mock：MemoryStore 真实实现待成员 B 交付
-    assert isinstance(orch.memory_store, MockMemoryStore)
-    assert isinstance(orch.memory_manager, MockMemoryManager)
+    assert isinstance(orch.memory_store, PostgresMemoryStore)
+    assert isinstance(orch.memory_manager, RuleBasedMemoryManager)
 
 
 def test_stage1_construction_does_not_require_database():
