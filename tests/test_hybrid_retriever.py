@@ -56,6 +56,7 @@ def test_retrieve_fuses_bm25_and_vector_results(monkeypatch) -> None:
         "_connect",
         lambda: FakeEvidenceConnection(),
     )
+    monkeypatch.setattr(retriever, "_load_bm25_index", lambda: None)
 
     results = retriever.retrieve("retrieval", top_k=3)
 
@@ -72,6 +73,28 @@ def test_retrieve_returns_empty_for_empty_query() -> None:
     assert retriever.retrieve("retrieval", top_k=0) == []
 
 
+def test_load_bm25_index_rebuilds_from_persisted_chunks(monkeypatch) -> None:
+    retriever = HybridRetriever(embedder=FakeEmbedder())
+    chunks = [make_chunk("chunk-a", "persisted retrieval content", 1)]
+    monkeypatch.setattr(retriever, "_connect", lambda: FakeCorpusConnection(chunks))
+
+    retriever._load_bm25_index()
+    results = retriever._bm25.retrieve("persisted", top_k=5)
+
+    assert [item.chunk_id for item in results] == ["chunk-a"]
+    assert retriever._bm25_loaded is True
+
+
+def test_vector_query_casts_embedding_parameter_to_vector(monkeypatch) -> None:
+    retriever = HybridRetriever(embedder=FakeEmbedder())
+    connection = FakeVectorConnection()
+    monkeypatch.setattr(retriever, "_connect", lambda: connection)
+
+    assert retriever._vector_results([0.1, 0.2], limit=3) == []
+    assert "<=> %s::vector" in connection.query
+    assert connection.params == ([0.1, 0.2], [0.1, 0.2], 3)
+
+
 class FakeEvidenceConnection:
     """Minimal connection double for loading vector-only evidence."""
 
@@ -81,7 +104,11 @@ class FakeEvidenceConnection:
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         return None
 
-    def execute(self, query: str, params: tuple[str]) -> FakeEvidenceCursor:
+    def execute(
+        self,
+        query: str,
+        params: tuple[object, ...] = (),
+    ) -> FakeEvidenceCursor:
         return FakeEvidenceCursor()
 
 
@@ -90,3 +117,69 @@ class FakeEvidenceCursor:
 
     def fetchone(self) -> tuple[str, str, str, int, str]:
         return ("chunk-c", "demo-paper", "demo.pdf", 3, "vector-only text")
+
+    def fetchall(self) -> list[tuple[object, ...]]:
+        return []
+
+
+class FakeCorpusConnection:
+    """Connection double returning persisted chunk rows."""
+
+    def __init__(self, chunks: list[DocumentChunk]) -> None:
+        self.chunks = chunks
+
+    def __enter__(self) -> FakeCorpusConnection:
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        return None
+
+    def execute(self, query: str) -> FakeCorpusCursor:
+        return FakeCorpusCursor(self.chunks)
+
+
+class FakeCorpusCursor:
+    """Cursor double converting chunks into database-shaped rows."""
+
+    def __init__(self, chunks: list[DocumentChunk]) -> None:
+        self.rows = [
+            (
+                chunk.chunk_id,
+                chunk.document_id,
+                chunk.file_name,
+                chunk.page_number,
+                chunk.text,
+                chunk.char_start,
+                chunk.char_end,
+            )
+            for chunk in chunks
+        ]
+
+    def fetchall(self) -> list[tuple[str, str, str, int, str, int | None, int | None]]:
+        return self.rows
+
+
+class FakeVectorConnection:
+    """Connection double recording the pgvector query and parameters."""
+
+    def __init__(self) -> None:
+        self.query = ""
+        self.params: tuple[object, ...] = ()
+
+    def __enter__(self) -> FakeVectorConnection:
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        return None
+
+    def execute(self, query: str, params: tuple[object, ...]) -> FakeVectorCursor:
+        self.query = query
+        self.params = params
+        return FakeVectorCursor()
+
+
+class FakeVectorCursor:
+    """Cursor double returning no matching rows."""
+
+    def fetchall(self) -> list[tuple[str, float]]:
+        return []
