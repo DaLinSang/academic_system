@@ -78,8 +78,14 @@ def build_stage1_orchestrator(top_k: int = 5) -> Orchestrator:
 
     真实：Router（LLM）、Planner（LLM）、Retriever（B 的混合检索）、
           MemoryStore（B 的 PostgreSQL + 向量检索）、
-          Verifier（C 的词法校验）、AnswerGenerator（LLM）
-    记忆候选由保守规则筛选；A 可按公共接口替换为更强的策略。
+          Verifier（C 的词法校验）、AnswerGenerator（LLM）、
+          MemoryManager（A 的 LLM 策略）
+
+    记忆抽取有两套实现，同一接口，可按需切换：
+      - LLMMemoryManager（默认）：LLM 判断稳定性与有用性
+      - RuleBasedMemoryManager：纯规则，零模型成本，作为消融基线
+    对比两者对 RQ2（长期记忆是否提升个性化与跨会话完成度）的影响时，
+    只需改下面 memory_manager 那一行。
 
     前置条件：
       - `.env` 里配好 API key，否则 `get_llm()` 会退回 `MockLLM`，
@@ -92,7 +98,7 @@ def build_stage1_orchestrator(top_k: int = 5) -> Orchestrator:
     """
     from app.agent.answer_generator import LLMAnswerGenerator
     from app.llm.client import get_llm
-    from app.memory import PostgresMemoryStore, RuleBasedMemoryManager
+    from app.memory import LLMMemoryManager, PostgresMemoryStore
     from app.planning.planner import LLMPlanner
     from app.retrieval import HybridRetriever
     from app.routing.router import LLMRouter
@@ -104,7 +110,7 @@ def build_stage1_orchestrator(top_k: int = 5) -> Orchestrator:
         planner=LLMPlanner(llm),
         retriever=HybridRetriever(),
         memory_store=PostgresMemoryStore(),
-        memory_manager=RuleBasedMemoryManager(),
+        memory_manager=LLMMemoryManager(llm),
         verifier=LexicalVerifier(),
         answer_generator=LLMAnswerGenerator(llm),
         llm=llm,
