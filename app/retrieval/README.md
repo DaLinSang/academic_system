@@ -190,6 +190,10 @@ uv run python scripts/check_env.py
 
 ## 8. 错误处理
 
+`OllamaEmbedder.embed()` 调用本机 `http://localhost:11434/api/embeddings`。若本机设置了 HTTP 代理，普通 Python 请求可能被送往代理，出现 `502 Bad Gateway`，即使 Ollama 本身运行正常。本实现对本地 Ollama 请求使用 `trust_env=False`，避免继承代理环境；这属于 B 的检索实现，无需修改 A 的公共 `Retriever` 接口。
+
+排查顺序：先用 `ollama list` 确认模型存在，再用 `curl --noproxy '*' http://localhost:11434/api/tags` 确认本机服务可达，最后检查 `OLLAMA_BASE_URL` 是否仍指向本机。`ollama serve` 仅在服务没启动时运行；`ollama pull nomic-embed-text` 仅在模型缺失时运行。
+
 | 情况 | 行为 |
 |---|---|
 | 空 query | 返回 `[]` |

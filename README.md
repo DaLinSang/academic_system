@@ -148,10 +148,8 @@ uv run pytest -q && uv run ruff check .
 
 ## 7. 已知限制
 
-- **记忆仍是 Mock**：`MemoryStore` 真实实现待成员 B 交付，`MemoryManager` 仍是规则版。
-  B3/B4 的记忆对比实验暂不可信
-- **向量检索存在已知 bug**：`<=>` 参数缺少 `::vector` 转换，见
-  [#14](https://github.com/DaLinSang/academic_system/issues/14)。修复前混合检索实际只剩 BM25 一路
+- **长期记忆**：真实装配使用 PostgreSQL/pgvector 存取、Ollama embedding 检索；
+  写入候选仍由保守规则筛选，复杂的跨轮归纳与冲突消解尚未实现。详见 [Memory 模块说明](app/memory/README.md)
 - 没有 PDF 上传入口（UI 层待成员 C 的 Streamlit）
 - 没有 Web 界面（待成员 C）
 - `web_search` 与代码执行工具未实现

@@ -43,6 +43,7 @@ class LLMAnswerGenerator:
 |---|---|
 | `build_orchestrator(...)` | 显式注入所有依赖 |
 | `build_mock_orchestrator()` | 全 Mock，无需 key 与数据库 |
+| `build_stage1_orchestrator()` | 真实 LLM / 检索 / MemoryStore 装配；需要 PostgreSQL 与 Ollama |
 
 ## 4. 输入
 
@@ -134,6 +135,7 @@ Self-RAG 通过 reflection token 判断是否需要检索 [1]。
 - 没有 ReAct 式的"观察-再决策"循环，检索只执行一轮
 - `web_search` 与代码执行工具未接入
 - 记忆写回依赖 `MemoryManager`，当前为规则版
+- 阶段 1 的真实装配使用 PostgreSQL `PostgresMemoryStore` 和规则版 `RuleBasedMemoryManager`
 - 单轮对话，`turn_index` 未参与上下文构造
 
 ## 13. 最近一次验收状态
