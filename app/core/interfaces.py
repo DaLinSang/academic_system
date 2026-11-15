@@ -1,14 +1,28 @@
 """模块接口（抽象层）。
 
-**这是三人协作的核心文件。** 阶段 0 冻结后：
-  - B 实现 BaseRetriever / BaseMemoryStore
-  - C 实现 BaseVerifier
-  - A 实现 BaseRouter / BasePlanner / BaseLLM / BaseAnswerGenerator
+**这是三人协作的核心文件。** 本文件只声明签名，不含任何实现；
+方法体里的 `...` 是 Python 的空方法体占位符，等价于 Java 接口方法后面的 `;`。
 
-任何一方只要遵守签名，另一方的 Mock 和真实实现可以随时互换，
-Orchestrator 的代码一行都不用改。
+谁实现什么（截至 2026-11-15）：
 
-签名变更规则：必须三人确认 + 同步更新本文件 + 通知受影响的 Mock。
+    Protocol          实现类                    位置                          负责人
+    ----------------  ------------------------  ----------------------------  ------
+    Retriever         HybridRetriever           app/retrieval/                B
+    MemoryStore       —— 待交付 ——              app/memory/                   B
+    MemoryManager     LLMMemoryManager          app/memory/manager.py         A
+    Router            LLMRouter                 app/routing/                  A
+    Planner           LLMPlanner                app/planning/                 A
+    LLM               OpenAICompatibleLLM       app/llm/client.py             A
+    AnswerGenerator   LLMAnswerGenerator        app/agent/answer_generator.py A
+    Verifier          LexicalVerifier           app/verification/             C
+
+Python 不写 `implements`：只要方法名与签名对得上就自动满足接口（结构化类型）。
+`@runtime_checkable` 让它支持 `isinstance()`，测试里靠这个发现"谁写偏了"。
+
+任何一方只要遵守签名，Mock 和真实实现就能随时互换，
+`Orchestrator` 的代码一行都不用改。
+
+签名变更规则：必须三人确认 + 同步更新本文件 + 通知受影响的 Mock 与实现。
 """
 
 from __future__ import annotations
