@@ -336,8 +336,16 @@ class Orchestrator:
                 candidates = self.memory_manager.extract_candidates(
                     state.question, state.final_answer, state.memory_context
                 )
+                self._absorb_usage(state, self.memory_manager)
                 for c in candidates:
                     self.memory_store.add(c, user_id=state.user_id)
+
+                # 记忆漏斗：模型提议几条、被敏感/重复/非法各拦掉几条。
+                # RQ2 分析"记忆写入拒绝率"直接用这个，比只报最终条数有说服力。
+                stats = getattr(self.memory_manager, "last_stats", None)
+                if isinstance(stats, dict) and stats:
+                    state.log("memory_write", "stats", **stats)
+
                 state.log("memory_write", "end", stored=len(candidates))
             except Exception as exc:  # noqa: BLE001
                 state.errors.append(f"memory_write: {type(exc).__name__}: {exc}")

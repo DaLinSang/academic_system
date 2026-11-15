@@ -11,9 +11,10 @@
 | 文件 | 作用 |
 |---|---|
 | `postgres_store.py` | `PostgresMemoryStore` 的五个公共方法和 Ollama 向量生成 |
-| `policy.py` | `RuleBasedMemoryManager`，决定本轮是否有可保存的用户陈述 |
+| `manager.py` | `LLMMemoryManager`，LLM 判断本轮是否有值得保存的陈述（A 维护，主策略） |
+| `policy.py` | `RuleBasedMemoryManager`，规则版筛选（B 维护，作消融基线） |
 | `schema.sql` | PostgreSQL 表、用户/tier 索引与 pgvector 索引 |
-| `__init__.py` | 向其他模块导出两个实现类 |
+| `__init__.py` | 向其他模块导出存储实现与两套策略 |
 | `tests/test_memory_store.py` | 数据库存取、跨实例读取、隔离、排序 |
 | `tests/test_memory_policy.py` | 三类候选、敏感内容过滤、去重 |
 
@@ -28,7 +29,8 @@ Orchestrator 开始处理问题
   → MemoryItem 列表进入 AgentState.memory_context
 
 Orchestrator 生成回答后
-  → RuleBasedMemoryManager.extract_candidates(question, answer, existing_memories)
+  → MemoryManager.extract_candidates(question, answer, existing_memories)
+    （默认 LLMMemoryManager；可换成 RuleBasedMemoryManager 作对照）
   → 只把策略层批准的 MemoryCandidate 交给 MemoryStore.add()
   → Ollama 编码候选内容
   → PostgreSQL 保存正文和向量
@@ -151,3 +153,62 @@ Protocol 提供 `search`、`list_all`、`update` 和 `delete`。Web 界面的记
 - 搜索的向量距离仅用于排序，不应把它展示成跨模型可比较的概率。
 - pgvector 维度必须与所选 embedding 模型输出维度一致；当前表结构按项目配置的 768 维模型建立。
 - `MemoryItem` 不包含 embedding；向量保存在 PostgreSQL 内部，不改公共数据契约。
+
+---
+
+## LLM 策略：`LLMMemoryManager`（成员 A）
+
+与 `RuleBasedMemoryManager` 实现同一个 `MemoryManager` 接口，区别是**判断依据来自模型而非关键词**。
+两套实现并存，用于对比「规则 vs 模型」对 RQ2（长期记忆是否提升个性化与跨会话完成度）的影响。
+
+### 三道闸
+
+| 闸 | 机制 | 目的 |
+|---|---|---|
+| 1 关键词预筛 | 命中 `_MEMORY_SIGNALS` 强信号才继续 | 无信号不调模型。绝大多数轮次卡在这里，是 RQ4 成本控制的关键 |
+| 2 LLM 抽取 | `json_mode` 输出 tier / content / importance / reason | 判断「稳定 + 有用」 |
+| 3 后处理 | 敏感六类、bigram 去重、格式清洗、条数上限 | 防止噪音与敏感信息污染记忆库 |
+
+### 为什么闸 1 不含「我」
+
+「帮我看看这个」也含「我」。把「我」单独收进信号表，会让几乎每一轮都触发一次模型调用，
+RQ4 的成本直接翻倍。代价是漏掉「以后都用表格」这类无主语表达（已部分收录）。
+
+### 与规则版的行为差异
+
+| 场景 | 规则版 | LLM 版 |
+|---|---|---|
+| 「我偏好中文回答」 | ✅ 存（命中「我偏好」） | ✅ 存 |
+| 「以后都用表格」 | ⚠️ 视规则表而定 | ✅ 存（模型判断为稳定偏好） |
+| 「我最近在看 RAG，不过只是随便翻翻」 | ⚠️ 可能误存 | ✅ 大概率不存（不稳定） |
+| 敏感信息 | 正则拦截 | 正则拦截 + 关键词兜底 |
+| 模型成本 | 0 | 每轮 1 次调用（无信号时 0） |
+
+### 观测数据
+
+`last_stats` 记录记忆漏斗，RQ2 可直接算「写入拒绝率」：
+
+```python
+{"llm_called": True, "proposed": 3, "accepted": 2,
+ "dropped_sensitive": 1, "dropped_duplicate": 0,
+ "dropped_invalid": 0, "skipped": None}
+```
+
+Orchestrator 会把它写进 `trace` 的 `memory_write / stats` 事件。
+
+### 测试
+
+```bash
+uv run pytest tests/test_memory_manager.py -v    # 42 项
+```
+
+覆盖：预筛不调模型、正常抽取、JSON 围栏、六类敏感信息、批内/跨批去重、
+非法 tier、过短/过长 content、引用标记清洗、importance 裁剪、条数上限、
+两种失败降级、用量与漏斗、工厂接线、编排器日志。
+
+### 已知限制
+
+- 闸 1 是关键词匹配，语义理解依赖闸 2 的模型判断
+- 去重用字符 bigram，措辞差异大的同义记忆会漏判（阈值 0.8，可调低至 0.65）
+- 没有记忆「更新」判断：同一事实变化（如换研究方向）会新增条目而非替换旧的
+- 敏感信息只做丢弃，不做脱敏保留

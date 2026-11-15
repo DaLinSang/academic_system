@@ -59,7 +59,9 @@ def test_mock_orchestrator_runs_without_key_or_database():
 # 真实装配
 # --------------------------------------------------------------------------- #
 def test_build_stage1_wires_real_components():
-    """真实模块必须接上，包括长期记忆存取与规则筛选。"""
+    """真实模块必须全部接上，一个 Mock 都不能剩。"""
+    from app.memory import LLMMemoryManager, PostgresMemoryStore
+
     orch = build_stage1_orchestrator()
 
     assert isinstance(orch.router, LLMRouter)
@@ -67,9 +69,8 @@ def test_build_stage1_wires_real_components():
     assert isinstance(orch.retriever, HybridRetriever)
     assert isinstance(orch.verifier, LexicalVerifier)
     assert isinstance(orch.answer_generator, LLMAnswerGenerator)
-
     assert isinstance(orch.memory_store, PostgresMemoryStore)
-    assert isinstance(orch.memory_manager, RuleBasedMemoryManager)
+    assert isinstance(orch.memory_manager, LLMMemoryManager)
 
 
 def test_stage1_construction_does_not_require_database():
