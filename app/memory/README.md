@@ -1,22 +1,53 @@
-# app/memory — 长期记忆存取
+# app/memory — 长期记忆
+
+## 运行时到底走哪个文件（先看这个）
+
+| 层 | 接口 | **运行时实现** | **运行时文件** | 负责人 | 状态 |
+|---|---|---|---|---|---|
+| 策略 | `MemoryManager` | **`LLMMemoryManager`** | **`app/memory/manager.py`** | **A** | ✅ **默认启用** |
+| 策略 | `MemoryManager` | `RuleBasedMemoryManager` | `app/memory/policy.py` | B | ⬜ 保留但**不启用** |
+| 存储 | `MemoryStore` | `PostgresMemoryStore` | `app/memory/postgres_store.py` | B | ✅ 启用 |
+
+**默认装配**（`build_stage1_orchestrator()`）注入的是 `LLMMemoryManager(llm)`，
+也就是 `app/memory/manager.py` 里的代码。
+
+`policy.py` 的规则版**保留在仓库里但不参与运行**，只在显式切换时才会执行：
+
+```python
+build_stage1_orchestrator()                        # 默认：LLMMemoryManager（manager.py）
+build_stage1_orchestrator(memory_strategy="rule")  # 切换：RuleBasedMemoryManager（policy.py）
+```
+
+规则版存在的唯一用途是给 RQ2 做「规则 vs 模型」的消融对照。
+
+调用链（每轮对话结束后触发）：
+
+```
+Orchestrator.run()
+  └─ _write_memory(state)
+       ├─ memory_manager.extract_candidates(...)   ← 策略层：要不要存、存什么
+       └─ memory_store.add(candidate)              ← 存储层：落库
+```
 
 ## 模块职责
 
-本模块落实长期记忆的持久化、语义检索和 CRUD，并提供一套保守的候选筛选规则。按照小组分工，记忆策略的最终审核和后续迭代由 A 负责；这里的策略实现通过冻结的 `MemoryManager` 接口注入，便于 A 替换。
+本模块落实长期记忆的持久化、语义检索和 CRUD，并提供两套候选筛选策略。
+记忆策略（判断要不要存、存什么）归 A，存储（怎么存、怎么查）归 B。
 
 这里的「长期」指数据存于 PostgreSQL，退出 Python、重启 Agent 后仍可读取；不是把对话历史全部塞给模型。`MemoryItem` 是跨模块传递的数据对象；数据库中的 embedding 只用于搜索，不传给 Router 或回答生成器。
 
 ## 文件导航
 
-| 文件 | 作用 |
-|---|---|
-| `postgres_store.py` | `PostgresMemoryStore` 的五个公共方法和 Ollama 向量生成 |
-| `manager.py` | `LLMMemoryManager`，LLM 判断本轮是否有值得保存的陈述（A 维护，主策略） |
-| `policy.py` | `RuleBasedMemoryManager`，规则版筛选（B 维护，作消融基线） |
-| `schema.sql` | PostgreSQL 表、用户/tier 索引与 pgvector 索引 |
-| `__init__.py` | 向其他模块导出存储实现与两套策略 |
-| `tests/test_memory_store.py` | 数据库存取、跨实例读取、隔离、排序 |
-| `tests/test_memory_policy.py` | 三类候选、敏感内容过滤、去重 |
+| 文件 | 作用 | 运行时 |
+|---|---|---|
+| `manager.py` | `LLMMemoryManager`，LLM 判断本轮是否有值得保存的陈述（A 维护） | ✅ 默认启用 |
+| `policy.py` | `RuleBasedMemoryManager`，规则版筛选（B 维护） | ⬜ 仅消融时启用 |
+| `postgres_store.py` | `PostgresMemoryStore` 的五个公共方法和 Ollama 向量生成 | ✅ 启用 |
+| `schema.sql` | PostgreSQL 表、用户/tier 索引与 pgvector 索引 | — |
+| `__init__.py` | 向其他模块导出存储实现与两套策略 | — |
+| `tests/test_memory_store.py` | 数据库存取、跨实例读取、隔离、排序 | — |
+| `tests/test_memory_policy.py` | 规则版：三类候选、敏感内容过滤、去重 | — |
+| `tests/test_memory_manager.py` | LLM 版：三道闸、敏感六类、去重、漏斗 | — |
 
 ## 数据流
 
@@ -60,15 +91,22 @@ Orchestrator 生成回答后
 
 `build_stage1_orchestrator()` 会注入真实的 `PostgresMemoryStore`。Orchestrator 仍只调用 `MemoryStore` Protocol 的方法，不依赖存储类内部实现。`build_mock_orchestrator()` 继续使用 `MockMemoryStore`，因此离线演示和单元测试不需要数据库。
 
-记忆是否写入仍由注入的 `MemoryManager` 决定。真实装配使用 `RuleBasedMemoryManager`：只从用户本轮明确表达的背景、偏好、任务状态中提取短陈述；跳过常见联系方式、密钥等敏感信息，以及与已读记忆文字重复的内容。没有固定「每 N 轮存一次」；每轮都检查，只有有合格候选时才保存。A 可以在工厂中按同一接口替换为更强的策略。
+记忆是否写入由注入的 `MemoryManager` 决定。**默认装配使用 `LLMMemoryManager`（`manager.py`）**：先做关键词预筛，无强信号不调模型；有信号则让模型判断稳定性与有用性，再做敏感信息与去重过滤。没有固定「每 N 轮存一次」；每轮都检查，只有有合格候选时才保存。
 
-例如「我偏好用中文回答」可以成为 `preference`；「请用中文解释 RAG」是针对本轮 RAG 问题的指令，不应被误存成长期偏好。当前规则仅对独立的「请用中文回答／回复」等通用回答方式指令，以及明确带长期倾向的表达创建偏好候选。规则更新不会自动删除数据库里此前已经误存的条目；用户或管理界面可通过 `list_all()` 找到 ID 后调用 `delete()` 清理。
+`RuleBasedMemoryManager`（`policy.py`）是纯规则的旧版实现，**保留但不启用**，仅供 RQ2 消融对照：
+
+```python
+build_stage1_orchestrator()                        # 默认 LLMMemoryManager
+build_stage1_orchestrator(memory_strategy="rule")  # 切到规则版
+```
+
+例如「我偏好用中文回答」可以成为 `preference`；「请用中文解释 RAG」是针对本轮 RAG 问题的指令，不应被误存成长期偏好。规则版对后者做了专门拦截（`_GENERAL_REPLY_REQUEST`）；LLM 版靠提示词里的"稳定 + 有用"判断来区分。规则更新不会自动删除数据库里此前已经误存的条目；用户或管理界面可通过 `list_all()` 找到 ID 后调用 `delete()` 清理。
 
 ### A：如何接入和替换策略
 
-真实装配入口为 `app.agent.factory.build_stage1_orchestrator()`。工厂创建 `PostgresMemoryStore` 和 `RuleBasedMemoryManager`，然后通过 `build_orchestrator(...)` 注入。`Orchestrator.run()` 在路由前调 `memory_store.search()`；在回答完成后调 `memory_manager.extract_candidates()`，再把返回的候选逐条交给 `memory_store.add()`。A 无需直接查询 `memories` 表，也无需修改公共接口名称。
+真实装配入口为 `app.agent.factory.build_stage1_orchestrator()`。工厂创建 `PostgresMemoryStore`（存储）和 `LLMMemoryManager`（策略），然后通过 `build_orchestrator(...)` 注入。`Orchestrator.run()` 在路由前调 `memory_store.search()`；在回答完成后调 `memory_manager.extract_candidates()`，再把返回的候选逐条交给 `memory_store.add()`。A 无需直接查询 `memories` 表，也无需修改公共接口名称。
 
-如需升级为 LLM 判断策略，只实现 `MemoryManager.extract_candidates(question, answer, existing_memories)` 并在工厂替换注入对象。当前规则只识别明确的中文表达，不能把几轮零散对话自动总结成新画像，也不会自动解决互相矛盾的偏好。当前 `existing_memories` 是搜索召回的 top-k，不是用户全部记忆，因此策略层的文字去重只覆盖这些已召回项。策略的最终选择请 A review。
+要换成别的策略，只需实现 `MemoryManager.extract_candidates(question, answer, existing_memories)` 并在工厂替换注入对象——`Orchestrator` 一行都不用改。当前 `existing_memories` 是搜索召回的 top-k，不是用户全部记忆，因此策略层的文字去重只覆盖这些已召回项。
 
 ### C：如何读取、管理和关闭
 
