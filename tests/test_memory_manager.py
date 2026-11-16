@@ -330,10 +330,12 @@ def test_rejects_invalid_threshold():
 # 集成：工厂与编排器
 # --------------------------------------------------------------------------- #
 def test_stage1_orchestrator_uses_llm_memory_manager():
+    from app.memory import PostgresMemoryStore
+
     orch = build_stage1_orchestrator()
     assert isinstance(orch.memory_manager, LLMMemoryManager)
-    # 存储层仍为 Mock，等成员 B 交付 MemoryStore
-    assert type(orch.memory_store).__name__ == "MockMemoryStore"
+    # 存储层用成员 B 的 PostgreSQL 实现
+    assert isinstance(orch.memory_store, PostgresMemoryStore)
 
 
 def test_orchestrator_logs_memory_funnel():

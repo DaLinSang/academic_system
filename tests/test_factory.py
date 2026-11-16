@@ -27,7 +27,7 @@ from app.core.mocks import (
     MockVerifier,
 )
 from app.core.types import PlanStep, Usage
-from app.memory import PostgresMemoryStore, RuleBasedMemoryManager
+from app.memory import PostgresMemoryStore
 from app.planning.planner import LLMPlanner
 from app.retrieval import HybridRetriever
 from app.routing.router import LLMRouter, RuleBasedRouter
@@ -60,7 +60,7 @@ def test_mock_orchestrator_runs_without_key_or_database():
 # --------------------------------------------------------------------------- #
 def test_build_stage1_wires_real_components():
     """真实模块必须全部接上，一个 Mock 都不能剩。"""
-    from app.memory import LLMMemoryManager, PostgresMemoryStore
+    from app.memory import LLMMemoryManager
 
     orch = build_stage1_orchestrator()
 
