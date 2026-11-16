@@ -58,6 +58,9 @@ class LLMAnswerGenerator:
 |---|---|
 | `route` / `plan` | Router / Planner |
 | `evidence` | Retriever（经 `add_evidence` 去重） |
+| `tool_results` | 每次工具调用记一条（`ToolResult`：成功与否、耗时、查询、命中数） |
+| `plan[].status` / `.result_summary` | 执行后回填；未执行的 `llm` 步骤保持 `pending` |
+| `current_step` | 已处理（非 pending）的步骤数 |
 | `draft_answer` / `citations` | AnswerGenerator + `build_citations()` |
 | `claims` | Verifier |
 | `final_answer` | `_compose_final()` |

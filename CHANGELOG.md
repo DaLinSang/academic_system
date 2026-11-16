@@ -15,6 +15,7 @@
 
 ### Added
 
+- 测试 `tests/test_tool_tracking.py`（13 项）：工具调用记录、步骤状态回填、失败不中断后续步骤、无计划时退化用原问题
 - **LLM 路由器**（`app/routing/router.py`）
   - `LLMRouter`：单次 LLM 调用做三分类（direct / document_retrieval / complex_task），temperature 固定为 0 保证可复现
   - `RuleBasedRouter`：纯关键词基线，用于对照「用模型做路由是否值得」
@@ -52,6 +53,10 @@
 
 ### Changed
 
+- `app/agent/orchestrator.py`：检索阶段现在把每次调用记进 `tool_results`（此前 `record_tool()` 从未被调用，该字段恒为空）
+- `app/agent/orchestrator.py`：执行后回填 `PlanStep.status` 与 `result_summary`（`done` / `failed` + 命中条数或错误），未执行的 `llm` 步骤保持 `pending`
+- `app/agent/orchestrator.py`：`current_step` 改为「已处理步骤数」，此前恒为 0
+- `app/agent/orchestrator.py`：检索失败的错误统一走 `record_tool()`，不再单独手写 `state.errors`
 - `app/agent/orchestrator.py`：`_absorb_usage()` 现在同时回收 Router 与 Planner 内部产生的 token 与成本，避免 RQ4 统计偏低
 - 路由启发式关键词收紧：移除「什么是 / 定义 / 提到」等泛化词，避免把概念性问题误判为需要检索，抬高 RQ1 的不必要检索率
 - `app/core/interfaces.py`、`app/core/mocks.py`：记忆存储方案表述由「SQLite/PostgreSQL」明确为 PostgreSQL + pgvector
