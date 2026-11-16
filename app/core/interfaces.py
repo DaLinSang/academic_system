@@ -5,19 +5,23 @@
 
 谁实现什么（截至 2026-11-16）：
 
-    Protocol          实现类                     位置                            负责人
-    ----------------  -------------------------  ------------------------------  ------
-    Retriever         HybridRetriever            app/retrieval/                  B
-    MemoryStore       PostgresMemoryStore        app/memory/postgres_store.py    B
-    MemoryManager     RuleBasedMemoryManager     app/memory/policy.py            B
-    Verifier          LexicalVerifier            app/verification/               C
-    Router            LLMRouter                  app/routing/                    A
-    Planner           LLMPlanner                 app/planning/                   A
-    LLM               OpenAICompatibleLLM        app/llm/client.py               A
-    AnswerGenerator   LLMAnswerGenerator         app/agent/answer_generator.py   A
+    Protocol          实现类                     位置                            负责人  运行时
+    ----------------  -------------------------  ------------------------------  ------  ------
+    Retriever         HybridRetriever            app/retrieval/                  B      ✅
+    MemoryStore       PostgresMemoryStore        app/memory/postgres_store.py    B      ✅
+    MemoryManager     LLMMemoryManager           app/memory/manager.py           A      ✅ 主策略
+                      RuleBasedMemoryManager     app/memory/policy.py            B      ⬜ 基线保留未启用
+    Verifier          LexicalVerifier            app/verification/               C      ✅
+    Router            LLMRouter                  app/routing/                    A      ✅
+    Planner           LLMPlanner                 app/planning/                   A      ✅
+    LLM               OpenAICompatibleLLM        app/llm/client.py               A      ✅
+    AnswerGenerator   LLMAnswerGenerator         app/agent/answer_generator.py   A      ✅
 
-注意 `MemoryManager` 归 B：它和 `MemoryStore` 同属 `app/memory` 模块。
-A 负责审核策略口径与后续迭代，但不在该模块内另写实现。
+`MemoryManager` 是唯一有两个实现的接口，按分工：
+  - **策略层（判断要不要存、存什么）归 A** → `LLMMemoryManager`，运行时启用
+  - **存储层（怎么存、怎么查）归 B** → `PostgresMemoryStore`
+  - `RuleBasedMemoryManager` 是 B 早期垫的规则版，保留作 RQ2 的消融基线，**默认不启用**。
+    切换方式：`build_stage1_orchestrator(memory_strategy="rule")`。
 
 Python 不写 `implements`：只要方法名与签名对得上就自动满足接口（结构化类型）。
 `@runtime_checkable` 让它支持 `isinstance()`，测试里靠这个发现实现漂移。
@@ -107,17 +111,19 @@ class MemoryStore(Protocol):
 
 
 # --------------------------------------------------------------------------- #
-# B 负责实现（记忆模块的策略层，与 MemoryStore 同属 app/memory）
+# A 负责实现（策略层；存储层 MemoryStore 归 B）
 # --------------------------------------------------------------------------- #
 @runtime_checkable
 class MemoryManager(Protocol):
     """决定"这段对话里有没有值得长期保存的信息"。
 
-    与 MemoryStore 的分工（两者都归成员 B）：
-      MemoryManager（B）= 要不要存、存什么  →  产出 MemoryCandidate
+    与 MemoryStore 的分工：
+      MemoryManager（A）= 要不要存、存什么  →  产出 MemoryCandidate
       MemoryStore（B）  = 怎么存、怎么查     →  消费 MemoryCandidate
 
-    A 负责审核策略口径与后续迭代，但不在 app/memory 内另写实现。
+    两套实现：
+      LLMMemoryManager（A，app/memory/manager.py）—— 运行时启用
+      RuleBasedMemoryManager（B，app/memory/policy.py）—— 基线保留，默认不启用
 
     Proposal 4.3 的写入门槛：稳定 + 对未来有用 + 不敏感。原始对话不存。
     """

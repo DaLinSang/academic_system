@@ -95,18 +95,19 @@ class PgVectorRetriever:
 
 ---
 
-## 3. 成员 B：MemoryStore + MemoryManager
+## 3. 记忆模块：MemoryStore（B）+ MemoryManager（A）
 
-**文件**：`app/memory/`
+**文件**：都在 `app/memory/`，但**负责人不同**。
 
-本模块由**两个接口**组成，都归成员 B：
+| 接口 | 层 | 运行时实现 | 文件 | 负责人 |
+|---|---|---|---|---|
+| `MemoryStore` | 存储：怎么存、怎么查、怎么删 | `PostgresMemoryStore` | `postgres_store.py` | B |
+| `MemoryManager` | 策略：要不要存、存什么 | `LLMMemoryManager` | `manager.py` | **A** |
+| `MemoryManager` | 同上（**基线，默认不启用**） | `RuleBasedMemoryManager` | `policy.py` | B |
 
-| 接口 | 实现文件 | 职责 |
-|---|---|---|
-| `MemoryStore` | `postgres_store.py` | 怎么存、怎么查、怎么删（存储层） |
-| `MemoryManager` | `policy.py` | 要不要存、存什么（策略层，产出 `MemoryCandidate`） |
-
-A 负责审核策略口径与后续迭代，但**不在本模块内另写实现**。
+`MemoryManager` 是唯一有两个实现的接口。默认启用 A 的 LLM 版；
+`RuleBasedMemoryManager` 是 B 早期垫的规则版，保留作 RQ2 的消融基线，
+切换方式 `build_stage1_orchestrator(memory_strategy="rule")`。
 
 ```python
 class MemoryStore(Protocol):
@@ -119,11 +120,9 @@ class MemoryStore(Protocol):
     def list_all(self, user_id: str = "default") -> list[MemoryItem]: ...
 ```
 
-**注意分工**：`MemoryStore` 与 `MemoryManager` 都归成员 B。
-「要不要存、存什么」由 `MemoryManager` 判断（`app/memory/policy.py`），
-「怎么存、怎么查」由你实现（`app/memory/postgres_store.py`）。
-A 只负责审核策略与后续迭代，不在本模块内另写实现。
-`add()` 的入参是 `MemoryCandidate`，**不是** `MemoryItem` —— 因为 memory_id、时间戳由你生成。
+**注意分工**：「要不要存、存什么」由 `MemoryManager` 判断——**A 负责，运行时走 `app/memory/manager.py` 的 `LLMMemoryManager`**；
+「怎么存、怎么查」由 B 实现（`app/memory/postgres_store.py`）。
+`add()` 的入参是 `MemoryCandidate`，**不是** `MemoryItem` —— 因为 memory_id、时间戳由存储层生成。
 
 | 项 | 要求 |
 |---|---|
