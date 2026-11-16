@@ -1,14 +1,35 @@
 """模块接口（抽象层）。
 
-**这是三人协作的核心文件。** 阶段 0 冻结后：
-  - B 实现 BaseRetriever / BaseMemoryStore
-  - C 实现 BaseVerifier
-  - A 实现 BaseRouter / BasePlanner / BaseLLM / BaseAnswerGenerator
+**这是三人协作的核心文件。** 本文件只声明签名，不含任何实现；
+方法体里的 `...` 是 Python 的空方法体占位符，等价于 Java 接口方法后面的 `;`。
 
-任何一方只要遵守签名，另一方的 Mock 和真实实现可以随时互换，
-Orchestrator 的代码一行都不用改。
+谁实现什么（截至 2026-11-16）：
 
-签名变更规则：必须三人确认 + 同步更新本文件 + 通知受影响的 Mock。
+    Protocol          实现类                     位置                            负责人  运行时
+    ----------------  -------------------------  ------------------------------  ------  ------
+    Retriever         HybridRetriever            app/retrieval/                  B      ✅
+    MemoryStore       PostgresMemoryStore        app/memory/postgres_store.py    B      ✅
+    MemoryManager     LLMMemoryManager           app/memory/manager.py           A      ✅ 主策略
+                      RuleBasedMemoryManager     app/memory/policy.py            B      ⬜ 基线保留未启用
+    Verifier          LexicalVerifier            app/verification/               C      ✅
+    Router            LLMRouter                  app/routing/                    A      ✅
+    Planner           LLMPlanner                 app/planning/                   A      ✅
+    LLM               OpenAICompatibleLLM        app/llm/client.py               A      ✅
+    AnswerGenerator   LLMAnswerGenerator         app/agent/answer_generator.py   A      ✅
+
+`MemoryManager` 是唯一有两个实现的接口，按分工：
+  - **策略层（判断要不要存、存什么）归 A** → `LLMMemoryManager`，运行时启用
+  - **存储层（怎么存、怎么查）归 B** → `PostgresMemoryStore`
+  - `RuleBasedMemoryManager` 是 B 早期垫的规则版，保留作 RQ2 的消融基线，**默认不启用**。
+    切换方式：`build_stage1_orchestrator(memory_strategy="rule")`。
+
+Python 不写 `implements`：只要方法名与签名对得上就自动满足接口（结构化类型）。
+`@runtime_checkable` 让它支持 `isinstance()`，测试里靠这个发现实现漂移。
+
+任何一方只要遵守签名，Mock 和真实实现就能随时互换，
+`Orchestrator` 的代码一行都不用改。
+
+签名变更规则：必须三人确认 + 同步更新本文件 + 通知受影响的 Mock 与实现。
 """
 
 from __future__ import annotations
@@ -90,7 +111,7 @@ class MemoryStore(Protocol):
 
 
 # --------------------------------------------------------------------------- #
-# A 负责实现（策略层）
+# A 负责实现（策略层；存储层 MemoryStore 归 B）
 # --------------------------------------------------------------------------- #
 @runtime_checkable
 class MemoryManager(Protocol):
@@ -99,6 +120,10 @@ class MemoryManager(Protocol):
     与 MemoryStore 的分工：
       MemoryManager（A）= 要不要存、存什么  →  产出 MemoryCandidate
       MemoryStore（B）  = 怎么存、怎么查     →  消费 MemoryCandidate
+
+    两套实现：
+      LLMMemoryManager（A，app/memory/manager.py）—— 运行时启用
+      RuleBasedMemoryManager（B，app/memory/policy.py）—— 基线保留，默认不启用
 
     Proposal 4.3 的写入门槛：稳定 + 对未来有用 + 不敏感。原始对话不存。
     """
