@@ -15,6 +15,19 @@
 
 ### Added
 
+- **记忆写入决策**（`app/memory/manager.py`）
+  - `LLMMemoryManager`：单次 LLM 调用判断「这段对话里有没有值得长期保存的信息」
+  - 三道闸：关键词预筛（无信号不调模型）→ LLM 抽取 → 后处理过滤（敏感 / 重复 / 非法）
+  - 敏感信息六类拦截：手机号、邮箱、身份证、银行卡、API key、学号等关键词
+  - 去重：字符 bigram Jaccard ≥ 0.8，同时对比已有记忆与批内候选
+  - `last_stats` 记录记忆漏斗（提议 / 采纳 / 各闸拦截数），供 RQ2 计算写入拒绝率
+  - 记忆写入失败不影响回答，静默降级为空列表
+  - **运行时默认启用**；`RuleBasedMemoryManager`（`policy.py`）保留但不启用，仅作消融基线
+- **JSON 解析共享工具**（`app/core/json_utils.py`）
+  - `extract_json_array` / `extract_json_object`：处理 json 围栏、前后夹带解释、字符串内含括号
+- 模块文档 `app/memory/README.md`（顶部新增「运行时到底走哪个文件」对照表）
+- 测试 `tests/test_memory_manager.py`（42 项）
+- 测试 `tests/test_memory_wiring.py`（12 项）：钉死默认策略与其 `__module__`，防止重构时被改回去
 - 测试 `tests/test_tool_tracking.py`（13 项）：工具调用记录、步骤状态回填、失败不中断后续步骤、无计划时退化用原问题
 - **LLM 路由器**（`app/routing/router.py`）
   - `LLMRouter`：单次 LLM 调用做三分类（direct / document_retrieval / complex_task），temperature 固定为 0 保证可复现
@@ -57,6 +70,8 @@
 - `app/agent/orchestrator.py`：执行后回填 `PlanStep.status` 与 `result_summary`（`done` / `failed` + 命中条数或错误），未执行的 `llm` 步骤保持 `pending`
 - `app/agent/orchestrator.py`：`current_step` 改为「已处理步骤数」，此前恒为 0
 - `app/agent/orchestrator.py`：检索失败的错误统一走 `record_tool()`，不再单独手写 `state.errors`
+- `app/agent/orchestrator.py`：记忆写回阶段现在会归集 MemoryManager 的 token 成本，并把记忆漏斗写入 `trace`
+- `app/agent/factory.py`：`build_stage1_orchestrator()` 新增 `memory_strategy` 参数（`"llm"` 默认 / `"rule"`）；默认注入 `LLMMemoryManager`，规则版保留作 RQ2 消融基线
 - `app/agent/orchestrator.py`：`_absorb_usage()` 现在同时回收 Router 与 Planner 内部产生的 token 与成本，避免 RQ4 统计偏低
 - 路由启发式关键词收紧：移除「什么是 / 定义 / 提到」等泛化词，避免把概念性问题误判为需要检索，抬高 RQ1 的不必要检索率
 - `app/core/interfaces.py`、`app/core/mocks.py`：记忆存储方案表述由「SQLite/PostgreSQL」明确为 PostgreSQL + pgvector

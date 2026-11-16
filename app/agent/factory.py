@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from app.agent.orchestrator import Orchestrator
 from app.core.interfaces import (
     LLM,
@@ -73,13 +75,27 @@ def build_mock_orchestrator(top_k: int = 5) -> Orchestrator:
     )
 
 
-def build_stage1_orchestrator(top_k: int = 5) -> Orchestrator:
+def build_stage1_orchestrator(
+    top_k: int = 5,
+    memory_strategy: Literal["llm", "rule"] = "llm",
+) -> Orchestrator:
     """阶段 1 的真实装配：能跑真模型的链路。
 
-    真实：Router（LLM）、Planner（LLM）、Retriever（B 的混合检索）、
-          MemoryStore（B 的 PostgreSQL + 向量检索）、
-          Verifier（C 的词法校验）、AnswerGenerator（LLM）
-    记忆候选由保守规则筛选；A 可按公共接口替换为更强的策略。
+    各模块运行时实际走哪个文件：
+
+        Router            app/routing/router.py           LLMRouter
+        Planner           app/planning/planner.py         LLMPlanner
+        Retriever         app/retrieval/                   HybridRetriever（B）
+        MemoryStore       app/memory/postgres_store.py    PostgresMemoryStore（B）
+        MemoryManager     app/memory/manager.py           LLMMemoryManager（A，默认）
+        Verifier          app/verification/                LexicalVerifier（C）
+        AnswerGenerator   app/agent/answer_generator.py   LLMAnswerGenerator
+        LLM               app/llm/client.py               get_llm()
+
+    `memory_strategy` 只影响记忆策略这一处：
+      - "llm"（默认）：`app/memory/manager.py` 的 `LLMMemoryManager`，让模型判断
+      - "rule"：`app/memory/policy.py` 的 `RuleBasedMemoryManager`，纯规则零成本
+    规则版是 B 早期垫的实现，保留作 RQ2「规则 vs 模型」的消融基线。
 
     前置条件：
       - `.env` 里配好 API key，否则 `get_llm()` 会退回 `MockLLM`，
@@ -92,19 +108,27 @@ def build_stage1_orchestrator(top_k: int = 5) -> Orchestrator:
     """
     from app.agent.answer_generator import LLMAnswerGenerator
     from app.llm.client import get_llm
-    from app.memory import PostgresMemoryStore, RuleBasedMemoryManager
+    from app.memory import LLMMemoryManager, PostgresMemoryStore, RuleBasedMemoryManager
     from app.planning.planner import LLMPlanner
     from app.retrieval import HybridRetriever
     from app.routing.router import LLMRouter
     from app.verification import LexicalVerifier
 
     llm = get_llm()
+
+    if memory_strategy == "rule":
+        memory_manager = RuleBasedMemoryManager()
+    elif memory_strategy == "llm":
+        memory_manager = LLMMemoryManager(llm)
+    else:
+        raise ValueError(f"未知的 memory_strategy: {memory_strategy!r}，只支持 'llm' / 'rule'")
+
     return build_orchestrator(
         router=LLMRouter(llm),
         planner=LLMPlanner(llm),
         retriever=HybridRetriever(),
         memory_store=PostgresMemoryStore(),
-        memory_manager=RuleBasedMemoryManager(),
+        memory_manager=memory_manager,
         verifier=LexicalVerifier(),
         answer_generator=LLMAnswerGenerator(llm),
         llm=llm,
