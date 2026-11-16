@@ -60,6 +60,22 @@ class LLMAnswerGenerator:
 `memory_strategy="rule"` 会把 MemoryManager 换成 `app/memory/policy.py` 的规则版
 （B 维护，默认不启用，仅作 RQ2 消融基线）。
 
+### RunLogger
+
+```python
+class RunLogger:
+    def __init__(self, *, mode, flags=None, dataset_name="unspecified",
+                 dataset_size=None, model=None, top_k=5,
+                 name=None, runs_dir=None, extra=None): ...
+    def log(self, state: AgentState) -> None: ...
+    def finish(self, summary: dict | None = None) -> Path: ...
+```
+
+一次实验运行 = 一个目录（`runs/<run_id>/`），内含 `meta.json` 与 `samples.jsonl`。
+
+**只负责落盘，不算指标。** 指标由成员 C 在 `app/evaluation/` 里实现，
+口径见 `docs/eval-contract.md`。
+
 ## 4. 输入
 
 `Orchestrator.run()` 的入参见上。`AnswerGenerator.generate()` 读取 `AgentState` 的：
