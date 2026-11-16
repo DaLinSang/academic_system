@@ -15,6 +15,19 @@
 
 ### Added
 
+- **实验运行记录器**（`app/agent/run_logger.py`）
+  - `RunLogger`：一次运行 = 一个目录，产出 `meta.json` + `samples.jsonl`
+  - `meta.json` 记录五项复现上下文：commit / 模型 / 生成参数 / 数据版本 / 起止时间
+  - `samples.jsonl` 一行一个完整 `AgentState`，直接可被 pandas / jq 读
+  - 重名 run 自动加序号，避免两次实验混进同一份 JSONL
+  - 异常中断也写 meta（含 `aborted` 与错误类型），留下「跑到哪断了」的证据
+  - **写失败直接抛异常**，不静默丢数据
+- **评测契约**（`docs/eval-contract.md`）
+  - 定义入口、样本粒度、落盘结构、字段语义
+  - RQ1–RQ4 每个指标的计算口径与字段来源
+  - 实验纪律（同条件、重复三次、改评测必重跑、失败案例留档）
+  - 五个已知数据坑（Mock token 是估算值、RRF 分值不可当概率、无证据时 claims 全 unsupported 等）
+- 测试 `tests/test_run_logger.py`（12 项）
 - **记忆写入决策**（`app/memory/manager.py`）
   - `LLMMemoryManager`：单次 LLM 调用判断「这段对话里有没有值得长期保存的信息」
   - 三道闸：关键词预筛（无信号不调模型）→ LLM 抽取 → 后处理过滤（敏感 / 重复 / 非法）
