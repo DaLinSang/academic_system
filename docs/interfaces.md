@@ -95,9 +95,18 @@ class PgVectorRetriever:
 
 ---
 
-## 3. 成员 B：MemoryStore
+## 3. 成员 B：MemoryStore + MemoryManager
 
 **文件**：`app/memory/`
+
+本模块由**两个接口**组成，都归成员 B：
+
+| 接口 | 实现文件 | 职责 |
+|---|---|---|
+| `MemoryStore` | `postgres_store.py` | 怎么存、怎么查、怎么删（存储层） |
+| `MemoryManager` | `policy.py` | 要不要存、存什么（策略层，产出 `MemoryCandidate`） |
+
+A 负责审核策略口径与后续迭代，但**不在本模块内另写实现**。
 
 ```python
 class MemoryStore(Protocol):
@@ -110,7 +119,10 @@ class MemoryStore(Protocol):
     def list_all(self, user_id: str = "default") -> list[MemoryItem]: ...
 ```
 
-**注意分工**：`MemoryManager`（A）负责"要不要存"，你负责"怎么存"。
+**注意分工**：`MemoryStore` 与 `MemoryManager` 都归成员 B。
+「要不要存、存什么」由 `MemoryManager` 判断（`app/memory/policy.py`），
+「怎么存、怎么查」由你实现（`app/memory/postgres_store.py`）。
+A 只负责审核策略与后续迭代，不在本模块内另写实现。
 `add()` 的入参是 `MemoryCandidate`，**不是** `MemoryItem` —— 因为 memory_id、时间戳由你生成。
 
 | 项 | 要求 |

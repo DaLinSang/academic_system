@@ -1,14 +1,31 @@
 """模块接口（抽象层）。
 
-**这是三人协作的核心文件。** 阶段 0 冻结后：
-  - B 实现 BaseRetriever / BaseMemoryStore
-  - C 实现 BaseVerifier
-  - A 实现 BaseRouter / BasePlanner / BaseLLM / BaseAnswerGenerator
+**这是三人协作的核心文件。** 本文件只声明签名，不含任何实现；
+方法体里的 `...` 是 Python 的空方法体占位符，等价于 Java 接口方法后面的 `;`。
 
-任何一方只要遵守签名，另一方的 Mock 和真实实现可以随时互换，
-Orchestrator 的代码一行都不用改。
+谁实现什么（截至 2026-11-16）：
 
-签名变更规则：必须三人确认 + 同步更新本文件 + 通知受影响的 Mock。
+    Protocol          实现类                     位置                            负责人
+    ----------------  -------------------------  ------------------------------  ------
+    Retriever         HybridRetriever            app/retrieval/                  B
+    MemoryStore       PostgresMemoryStore        app/memory/postgres_store.py    B
+    MemoryManager     RuleBasedMemoryManager     app/memory/policy.py            B
+    Verifier          LexicalVerifier            app/verification/               C
+    Router            LLMRouter                  app/routing/                    A
+    Planner           LLMPlanner                 app/planning/                   A
+    LLM               OpenAICompatibleLLM        app/llm/client.py               A
+    AnswerGenerator   LLMAnswerGenerator         app/agent/answer_generator.py   A
+
+注意 `MemoryManager` 归 B：它和 `MemoryStore` 同属 `app/memory` 模块。
+A 负责审核策略口径与后续迭代，但不在该模块内另写实现。
+
+Python 不写 `implements`：只要方法名与签名对得上就自动满足接口（结构化类型）。
+`@runtime_checkable` 让它支持 `isinstance()`，测试里靠这个发现实现漂移。
+
+任何一方只要遵守签名，Mock 和真实实现就能随时互换，
+`Orchestrator` 的代码一行都不用改。
+
+签名变更规则：必须三人确认 + 同步更新本文件 + 通知受影响的 Mock 与实现。
 """
 
 from __future__ import annotations
@@ -90,15 +107,17 @@ class MemoryStore(Protocol):
 
 
 # --------------------------------------------------------------------------- #
-# A 负责实现（策略层）
+# B 负责实现（记忆模块的策略层，与 MemoryStore 同属 app/memory）
 # --------------------------------------------------------------------------- #
 @runtime_checkable
 class MemoryManager(Protocol):
     """决定"这段对话里有没有值得长期保存的信息"。
 
-    与 MemoryStore 的分工：
-      MemoryManager（A）= 要不要存、存什么  →  产出 MemoryCandidate
+    与 MemoryStore 的分工（两者都归成员 B）：
+      MemoryManager（B）= 要不要存、存什么  →  产出 MemoryCandidate
       MemoryStore（B）  = 怎么存、怎么查     →  消费 MemoryCandidate
+
+    A 负责审核策略口径与后续迭代，但不在 app/memory 内另写实现。
 
     Proposal 4.3 的写入门槛：稳定 + 对未来有用 + 不敏感。原始对话不存。
     """
