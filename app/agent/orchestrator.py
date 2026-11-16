@@ -26,7 +26,6 @@ import traceback
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from app.core.errors import AcademicSystemError
 from app.core.interfaces import (
     LLM,
     AnswerGenerator,
@@ -42,6 +41,8 @@ from app.core.types import (
     ClaimStatus,
     RouteDecision,
     RouteType,
+    StepStatus,
+    ToolResult,
     Usage,
 )
 
@@ -240,21 +241,73 @@ class Orchestrator:
         return fallback
 
     def _run_retrieval(self, state: AgentState) -> None:
-        queries = [s.query for s in state.plan if s.query] or [state.question]
+        """执行检索工具，并把每次调用记进 `tool_results`。
+
+        计划里带 query 的 retrieval 步骤逐条执行；没有计划时退回用原问题检索。
+
+        每个步骤的执行结果回填到 `PlanStep.status` / `result_summary`，
+        这样「哪一步成功、哪一步失败、各命中几条」在 trace 和 UI 里都看得到。
+        在此之前 `tool_results` 恒为空、步骤状态永远停在 PENDING，
+        失败案例分析拿不到任何工具级数据。
+        """
+        planned = [s for s in state.plan if s.tool == "retrieval" and s.query]
+        jobs: list = [(s, s.query) for s in planned] if planned else [(None, state.question)]
+
         with self._stage(state, "retrieval") as ok:
             if not ok:
                 return
-            for q in queries:
+
+            for step, query in jobs:
+                started = time.perf_counter()
+                step_id = step.step_id if step is not None else None
                 try:
-                    found = self.retriever.retrieve(q, top_k=self.top_k)
-                    state.add_evidence(found)
-                except AcademicSystemError as exc:
-                    state.errors.append(f"retrieval: {exc}")
-                    state.log("retrieval", "error", error=str(exc))
+                    found = self.retriever.retrieve(query, top_k=self.top_k)
                 except Exception as exc:  # noqa: BLE001 - 跨模块边界统一兜底
-                    state.errors.append(f"retrieval: unexpected {type(exc).__name__}: {exc}")
-                    state.log("retrieval", "error", error=str(exc))
-            state.log("retrieval", "end", evidence=len(state.evidence), queries=len(queries))
+                    latency = round((time.perf_counter() - started) * 1000, 2)
+                    message = f"{type(exc).__name__}: {exc}"
+                    # record_tool 失败时会同时写入 state.errors
+                    state.record_tool(
+                        ToolResult(
+                            tool_name="retrieval",
+                            success=False,
+                            error=message,
+                            latency_ms=latency,
+                            metadata={"query": query, "step_id": step_id},
+                        )
+                    )
+                    state.log("retrieval", "error", error=message, step_id=step_id)
+                    if step is not None:
+                        step.status = StepStatus.FAILED
+                        step.result_summary = message[:120]
+                    continue
+
+                latency = round((time.perf_counter() - started) * 1000, 2)
+                state.add_evidence(found)
+                state.record_tool(
+                    ToolResult(
+                        tool_name="retrieval",
+                        success=True,
+                        output={"count": len(found)},
+                        latency_ms=latency,
+                        metadata={"query": query, "step_id": step_id},
+                    )
+                )
+                if step is not None:
+                    step.status = StepStatus.DONE
+                    step.result_summary = f"命中 {len(found)} 个片段"
+
+            # 已处理（DONE / FAILED / SKIPPED）的步骤数。
+            # llm 类步骤当前不单独执行，保持 PENDING 是如实反映，不要假装完成。
+            state.current_step = sum(
+                1 for s in state.plan if s.status is not StepStatus.PENDING
+            )
+            state.log(
+                "retrieval",
+                "end",
+                evidence=len(state.evidence),
+                queries=len(jobs),
+                tools_recorded=len(state.tool_results),
+            )
 
     def _run_verification(self, state: AgentState) -> None:
         with self._stage(state, "verify") as ok:
