@@ -11,7 +11,12 @@ from app.agent.factory import build_mock_orchestrator, build_stage1_orchestrator
 from app.agent.orchestrator import MODE_PRESETS
 from app.core.config import settings
 from app.core.types import AgentState
-from app.ui.presenters import claim_presentations, pdf_page_count, safe_pdf_name
+from app.ui.presenters import (
+    claim_presentations,
+    pdf_page_count,
+    safe_pdf_name,
+    verification_notice,
+)
 
 
 def _sync_mode_flags() -> None:
@@ -36,11 +41,13 @@ def _get_orchestrator(runtime: str, top_k: int):
 
 def _render_claims(state: AgentState) -> None:
     if not state.claims:
-        st.caption("本次回答没有可展示的 claim 校验结果。")
+        notice = verification_notice(state)
+        if notice:
+            getattr(st, notice[0])(notice[1])
         return
     for row in claim_presentations(state):
         source_text = "；".join(source["locator"] for source in row["sources"])
-        detail = f"置信度 {row['confidence']:.2f}"
+        detail = f"{row['score_label']} {row['confidence']:.2f}"
         if source_text:
             detail += f" · 证据：{source_text}"
         if row["note"]:

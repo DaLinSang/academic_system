@@ -56,7 +56,16 @@ def test_mock_batch_runner_writes_separate_comparable_runs(tmp_path) -> None:
     b4_rows = _read_jsonl(paths[1] / "samples.jsonl")
     assert [row["question"] for row in b1_rows] == [row["question"] for row in b4_rows]
     assert all(row["evidence"] == [] for row in b1_rows)
-    assert all(row["claims"] for row in b4_rows)
+    assert all(row["claims"] == [] for row in b4_rows)
+    assert all(
+        any(
+            event["stage"] == "verify"
+            and event["event"] == "skip"
+            and event["detail"].get("reason") == "no_document_evidence"
+            for event in row["trace"]
+        )
+        for row in b4_rows
+    )
 
 
 def test_batch_runner_preserves_memory_pair_identity_and_turns(tmp_path) -> None:

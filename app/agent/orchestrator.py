@@ -315,8 +315,18 @@ class Orchestrator:
                 # 校验器崩溃时不能让整个请求失败：降级为"未校验"
                 state.log("verify", "skip", reason="verifier unavailable")
                 return
+            if not state.evidence:
+                state.claims = []
+                state.log(
+                    "verify",
+                    "skip",
+                    reason="no_document_evidence",
+                    route=state.route.route if state.route else None,
+                )
+                return
             try:
                 state.claims = self.verifier.verify(state.draft_answer, state.evidence)
+                self._absorb_usage(state, self.verifier)
                 state.log(
                     "verify",
                     "end",
@@ -379,12 +389,25 @@ class Orchestrator:
         if not state.enable_verification or not state.claims or not state.evidence:
             return body
 
-        unsupported = [c for c in state.claims if c.status == ClaimStatus.UNSUPPORTED]
+        unverified = [
+            c
+            for c in state.claims
+            if c.status == ClaimStatus.UNSUPPORTED
+            and (c.note or "").startswith("UNVERIFIED:")
+        ]
+        unsupported = [
+            c
+            for c in state.claims
+            if c.status == ClaimStatus.UNSUPPORTED and c not in unverified
+        ]
         partial = [c for c in state.claims if c.status == ClaimStatus.PARTIALLY_SUPPORTED]
 
         notes: list[str] = []
+        if unverified:
+            notes.append("ℹ️ 以下内容现有证据不足，校验器未能可靠确认：")
+            notes.extend(f"  - {c.claim}" for c in unverified)
         if unsupported:
-            notes.append("⚠️ 以下内容在已检索到的证据中没有找到支持，请谨慎采信：")
+            notes.append("⚠️ 以下内容与已检索证据不一致或缺少支持，请谨慎采信：")
             notes.extend(f"  - {c.claim}" for c in unsupported)
         if partial:
             notes.append("ℹ️ 以下内容仅有部分证据支持：")

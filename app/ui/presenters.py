@@ -19,8 +19,19 @@ _UNSAFE_FILENAME = re.compile(r"[^A-Za-z0-9._\-\u4e00-\u9fff]+")
 _STATUS_VIEW = {
     ClaimStatus.SUPPORTED: ("supported", "success", "有证据支持"),
     ClaimStatus.PARTIALLY_SUPPORTED: ("partially_supported", "warning", "部分支持"),
-    ClaimStatus.UNSUPPORTED: ("unsupported", "error", "缺少证据"),
+    ClaimStatus.UNSUPPORTED: ("unsupported", "error", "证据不支持"),
 }
+
+
+def verification_notice(state: AgentState) -> tuple[str, str] | None:
+    """Explain why no claim result exists without implying factual error."""
+    if state.claims or not state.enable_verification:
+        return None
+    if state.evidence:
+        return ("info", "本次回答没有可独立校验的事实陈述。")
+    if state.route and state.route.is_direct:
+        return ("info", "本轮未进行文档证据校验；回答基于模型通用知识。")
+    return ("warning", "本轮执行了文档检索，但没有找到可用于校验的相关证据。")
 
 
 def safe_pdf_name(filename: str) -> str:
@@ -46,6 +57,12 @@ def claim_presentations(state: AgentState) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for check in state.claims:
         status, level, label = _STATUS_VIEW[check.status]
+        note = check.note or ""
+        if note.startswith("UNVERIFIED:"):
+            level, label = "warning", "未能确认"
+            note = note.removeprefix("UNVERIFIED:").strip()
+        lexical = "LEXICAL_SCORE:" in note or "lexical fallback" in note
+        note = note.replace("LEXICAL_SCORE:", "").strip()
         sources = [
             {
                 "chunk_id": chunk_id,
@@ -63,7 +80,12 @@ def claim_presentations(state: AgentState) -> list[dict[str, Any]]:
                 "level": level,
                 "label": label,
                 "confidence": check.confidence,
-                "note": check.note or "",
+                "score_label": (
+                    "词面支持得分（非事实正确概率）"
+                    if lexical
+                    else "校验判断置信度（非事实正确概率）"
+                ),
+                "note": note,
                 "sources": sources,
             }
         )

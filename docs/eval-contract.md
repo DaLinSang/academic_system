@@ -147,11 +147,14 @@ A 在 Orchestrator 里用 `_absorb_usage()` 统一归集。所以 `usage.total_t
 
 | 指标 | 公式 | 字段 |
 |---|---|---|
-| claim 支持率 | `count(supported) / count(全部 claims)` | `claims[].status` |
+| claim 支持率 | `count(supported) / count(可判定 claims)` | `claims[].status` + `note` |
 | 引用精确率 | `1 - len(invalid) / len(used)` | `trace` 的 `citation_audit` |
 | 引用召回率 | `被引用的证据数 / 标注应引用的证据数` | 需要标注 `gold_pages` |
 
 ⚠️ 关闭 `enable_verification` 时 `claims` 为空，**RQ3 指标不可算**。B1/B2 只能报引用精确率，不能报支持率。
+
+`note` 以 `UNVERIFIED:` 开头表示校验器明确无法可靠判断，不等同于证据反驳。
+这类 claim 单独计入 `unverified_claims`，不进入 claim 支持率分母。
 
 ### RQ4：效率与错误恢复
 
@@ -181,7 +184,8 @@ A 在 Orchestrator 里用 `_absorb_usage()` 统一归集。所以 `usage.total_t
 |---|---|
 | Mock 模式的 token 是估算值 | `MockLLM` 按 4 字符≈1 token 估算，**不能当真实成本**。RQ4 必须用真实模型跑 |
 | RRF 的 score 很小 | 量级 0.03 左右（`1/(60+rank)` 累加），**不要当概率解读**，只能排序 |
-| 无证据时 claims 全 unsupported | 这是设计：`AnswerGenerator` 在没证据时不调模型，直接拒答。算 RQ3 时要排除这类样本，否则支持率被拉低 |
+| 无证据时不生成 claims | Orchestrator 跳过 Verification，UI 区分 direct 通用知识回答与检索未命中；RQ3 不纳入这些样本 |
+| `UNVERIFIED:` 被当成 unsupported | 它表示证据矛盾或模型无法可靠判断，不是反驳；单独统计并从支持率分母排除 |
 | `citations` 含未被引用的证据 | 见 4.1 ② |
 | `evidence` 顺序 = 编号顺序 | Orchestrator 在生成后立刻 `build_citations()`，顺序绑定。若检索排序变了，编号会跟着变 |
 

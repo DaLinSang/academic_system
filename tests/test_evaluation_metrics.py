@@ -147,3 +147,28 @@ def test_zero_denominators_are_null(tmp_path) -> None:
     assert metrics["rq3"]["citation_precision"] is None
     assert metrics["rq3"]["citation_recall"] is None
     assert metrics["rq4"]["error_recovery_rate"] is None
+
+
+def test_unverified_claims_are_reported_but_excluded_from_support_rate(tmp_path) -> None:
+    samples = [_sample("s1", "document_retrieval")]
+    rows = [
+        _row(
+            0,
+            "document_retrieval",
+            True,
+            evidence=[{"chunk_id": "c1"}],
+            claims=[
+                {
+                    "status": "unsupported",
+                    "note": "UNVERIFIED: conflicting evidence",
+                }
+            ],
+        )
+    ]
+    run_dir, dataset_path = _write_run(tmp_path, samples, rows)
+
+    metrics = calculate_metrics(run_dir, dataset_path)
+
+    assert metrics["rq3"]["claim_support_rate"] is None
+    assert metrics["rq3"]["counts"]["claims"] == 0
+    assert metrics["rq3"]["counts"]["unverified_claims"] == 1
