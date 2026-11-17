@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.core.types import DocumentChunk, Evidence, RetrievalMethod
+from app.retrieval import hybrid_retriever
 from app.retrieval.hybrid_retriever import HybridRetriever
 
 
@@ -95,6 +96,17 @@ def test_vector_query_casts_embedding_parameter_to_vector(monkeypatch) -> None:
     assert connection.params == ([0.1, 0.2], [0.1, 0.2], 3)
 
 
+def test_index_document_invalidates_bm25_cache(monkeypatch) -> None:
+    retriever = HybridRetriever(embedder=FakeEmbedder())
+    retriever._bm25_loaded = True
+    chunk = make_chunk("demo-paper:p1:c0", "new text", 1)
+    monkeypatch.setattr(hybrid_retriever, "parse_pdf", lambda *args, **kwargs: [chunk])
+    monkeypatch.setattr(retriever, "_connect", lambda: FakeIndexConnection())
+
+    assert retriever.index_document("demo.pdf") == 1
+    assert retriever._bm25_loaded is False
+
+
 class FakeEvidenceConnection:
     """Minimal connection double for loading vector-only evidence."""
 
@@ -118,8 +130,28 @@ class FakeEvidenceCursor:
     def fetchone(self) -> tuple[str, str, str, int, str]:
         return ("chunk-c", "demo-paper", "demo.pdf", 3, "vector-only text")
 
-    def fetchall(self) -> list[tuple[object, ...]]:
-        return []
+    def fetchall(self) -> list[tuple[str, str, str, int, str]]:
+        return [("chunk-c", "demo-paper", "demo.pdf", 3, "vector-only text")]
+
+
+class FakeIndexConnection:
+    def __enter__(self) -> FakeIndexConnection:
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        return None
+
+    def cursor(self) -> FakeIndexConnection:
+        return self
+
+    def execute(self, query: str, params: object = None) -> None:
+        return None
+
+    def executemany(self, query: str, rows: object) -> None:
+        return None
+
+    def commit(self) -> None:
+        return None
 
 
 class FakeCorpusConnection:

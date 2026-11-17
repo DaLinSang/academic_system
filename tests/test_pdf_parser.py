@@ -63,6 +63,16 @@ def test_split_text_creates_overlapping_chunks() -> None:
     ]
 
 
+def test_split_text_prefers_word_boundary_and_keeps_offsets() -> None:
+    text = "alpha beta gamma delta epsilon"
+    chunks = pdf_parser.split_text(text, chunk_size=18, overlap=3)
+
+    assert chunks[0] == ("alpha beta gamma ", 0, 17)
+    assert all(text[start:end] == content for content, start, end in chunks)
+    assert all(start == 0 or text[start - 1] == " " for _, start, _ in chunks)
+    assert chunks[-1][2] == len(text)
+
+
 def test_split_text_rejects_invalid_chunk_size() -> None:
     with pytest.raises(ValueError):
         pdf_parser.split_text(
@@ -270,3 +280,22 @@ def test_parse_pdf_raises_for_page_extraction_failure(
 
     with pytest.raises(IngestionError):
         pdf_parser.parse_pdf(str(pdf_path))
+
+def test_parse_pdf_removes_nul_characters(monkeypatch, tmp_path) -> None:
+    pdf_path = tmp_path / "nul.pdf"
+    pdf_path.write_bytes(b"%PDF")
+
+    class FakePage:
+        def extract_text(self) -> str:
+            return "RAG\x00 is a retrieval system."
+
+    class FakeReader:
+        pages = [FakePage()]
+
+    monkeypatch.setattr(pdf_parser, "PdfReader", lambda _: FakeReader())
+
+    chunks = pdf_parser.parse_pdf(str(pdf_path))
+
+    assert len(chunks) == 1
+    assert "\x00" not in chunks[0].text
+    assert chunks[0].text == "RAG is a retrieval system."

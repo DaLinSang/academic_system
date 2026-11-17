@@ -63,7 +63,7 @@ PDF
 → DocumentChunk
 → Ollama embedding
 → PostgreSQL upsert
-→ BM25 内存索引更新
+→ 标记 BM25 缓存失效，下次检索从数据库重建全量索引
 ```
 
 `retrieve()` 的流程是：
@@ -153,7 +153,7 @@ app/retrieval/schema.sql
 | `char_start` / `char_end` | 文本偏移 |
 | `embedding` | pgvector 向量 |
 
-重复导入同一 chunk 使用 `ON CONFLICT DO UPDATE`，不会产生重复数据。
+重复导入同一文档时，先在同一事务中删除该文档旧 chunk，再写入新的 chunk；避免切分数量变化后遗留旧证据。索引成功后下一次检索会重新加载数据库中**所有文档**的 BM25 数据。向量候选对应的证据批量读取，避免逐条数据库查询。
 
 ## 7. 配置
 
