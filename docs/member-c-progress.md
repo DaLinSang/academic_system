@@ -2,9 +2,9 @@
 
 更新日期：2026-11-17
 
-当前开发分支：`feat/c-evaluation-v1`
+当前开发分支：`feat/c-evaluation-data-v1`
 
-基线提交：`origin/main@ee26b1a`（已包含 C UI PR #23 与 B 最终 Demo PR #24）
+基线提交：`origin/main@546f75e`（已包含 C 进度 PR #26、A Router PR #27 与三份 Demo PDF）
 
 ## 任务边界
 
@@ -46,6 +46,17 @@ embedding、数据库或记忆存储。
 当前状态：Claim Verification V1 与 Streamlit UI V1 均已进入 `main`。C 的下一阶段
 转为标注数据集、B1-B4 批量评测、指标计算和实验结果展示。
 
+### Annotated Dataset V1
+
+- 建立冻结的 JSON Schema：`app/evaluation/datasets/annotated_v1.schema.json`
+- 建立首批 12 条 JSONL：10 条路由/检索样本和 1 组两轮记忆样本
+- 使用 `gold_sources` 同时记录文件名和页码，避免多文档页码冲突
+- 保留 `gold_pages` 兼容 `docs/eval-contract.md`
+- 标注覆盖 direct、document_retrieval、complex_task、英文/中文、单文档、
+  多文档、BM25、RRF、Memory read/write
+- 对真实 PDF 页码完成文本提取与页面渲染复核
+- 增加数据完整性、路由语义、PDF 页码范围和跨会话顺序测试
+
 ## 2026-11-17 合并后复核
 
 PR #24 合入后，C 已重新核对 `docs/b-demo.md` 第 6 节接口：
@@ -61,6 +72,9 @@ PR #24 合入后，C 已重新核对 `docs/b-demo.md` 第 6 节接口：
 结论：A/B/C 的现有接口可以支持 C 开始真实联调和评测，不需要修改冻结的公共接口。
 Router 英文降级规则仍归 A；英文切分、字符偏移、页码和 BM25 全量重载归 B。
 C 只记录这些依赖的测试结果，不接管其实现。
+
+A 的英文 Router 与 `need_memory` 修复已通过 PR #27 合入 `main`。后续 C 的 RQ1
+评测应使用该版本作为基线，不再把已修复的英文降级行为列为当前代码阻塞。
 
 ## 组员模块现况与 C 的可用接口
 
@@ -84,9 +98,9 @@ C 只记录这些依赖的测试结果，不接管其实现。
 ### 当前复现条件
 
 代码层面的 PDF、Hybrid Retrieval、接口契约、Verifier 与 UI 测试均已通过。
-真实 B2/B4 联调仍需要在执行机器上补齐：
+三份约定 Demo PDF 已进入 `data/raw/` 并用于首批真实页码标注。真实 B2/B4
+联调仍需要在执行机器上补齐：
 
-- `data/raw/` 中约定的三份 Demo PDF；
 - PostgreSQL/pgvector；
 - Ollama 的 `nomic-embed-text`；
 - 若要评价答案质量和英文 Router，需要可用的聊天模型 API。
@@ -120,15 +134,15 @@ C 只记录这些依赖的测试结果，不接管其实现。
 
 ## 下一步执行顺序
 
-1. 在 `feat/c-evaluation-v1` 定义 JSONL schema，并先提交 5-10 条可审查样例。
+1. 请团队审核 `annotated_v1` 的 12 条问题、gold route、gold sources 和 claims。
 2. 编写 B1-B4 批量运行脚本，调用现有 `RunLogger`，不重复实现落盘逻辑。
 3. 编写 RQ1-RQ4 指标计算、混淆矩阵和结果表导出。
-4. 补充 C 侧接口回归测试：Evidence 页码/文本展示、无效 supporting ID 过滤、
+4. 继续补充 C 侧接口回归测试：Evidence 页码/文本展示、无效 supporting ID 过滤、
    当前用户 Memory ID 的更新与删除。
 5. 按 `docs/b-demo.md` 在 Real B2 完成小规模 smoke run，再运行 B3/B4。
 6. 将 `runs/` 汇总接入 Streamlit 实验结果页。
 7. 扩展完整标注集，正式实验重复三次并报告均值 ± 标准差。
 8. 准备固定 Demo 问题、unsupported claim 示例和 `docs/failure-cases.md`。
 
-当前无代码接口阻塞。C 可以立即开始数据集和离线评测工具开发；Real smoke run
-取决于统一测试 PDF、PostgreSQL、Ollama embedding 和聊天模型配置。
+当前无代码接口阻塞。首批数据集和离线校验已完成；Real B2 smoke run 取决于
+PostgreSQL 和 Ollama embedding，真实答案质量及 B3/B4 完整评测还需要聊天模型配置。
