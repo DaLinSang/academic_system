@@ -1,10 +1,10 @@
 # Member C Progress
 
-更新日期：2026-11-16
+更新日期：2026-11-17
 
-当前开发分支：`feat/c-streamlit-ui-v1`
+当前开发分支：`feat/c-evaluation-v1`
 
-基线提交：`origin/main@ad31c87`
+基线提交：`origin/main@ee26b1a`（已包含 C UI PR #23 与 B 最终 Demo PR #24）
 
 ## 任务边界
 
@@ -41,8 +41,26 @@ embedding、数据库或记忆存储。
 - 记忆查看、编辑和删除
 - 运行 token、成本、延迟及错误展示
 - UI 纯展示逻辑测试和 Mock 浏览器验收
+- 已通过 PR #23 合入 `main`
 
-当前状态：代码已在本地分支完成并同步到最新 `origin/main`，尚未推送和创建 PR。
+当前状态：Claim Verification V1 与 Streamlit UI V1 均已进入 `main`。C 的下一阶段
+转为标注数据集、B1-B4 批量评测、指标计算和实验结果展示。
+
+## 2026-11-17 合并后复核
+
+PR #24 合入后，C 已重新核对 `docs/b-demo.md` 第 6 节接口：
+
+- UI 通过 `AgentState.evidence` / `Citation` 展示真实文件名、页码和证据文本。
+- `LexicalVerifier.supporting_evidence` 只使用传入 Evidence 中存在的真实 `chunk_id`。
+- Claim 展示层使用 `evidence_by_chunk_id()` 解析定位，并过滤不存在的 ID。
+- 记忆界面先调用 `MemoryStore.list_all(user_id)`，再使用返回条目的 ID 调用
+  `update()` / `delete()`；没有直接访问数据库。
+- 关闭长期记忆通过 Orchestrator 的 `enable_memory=False`，符合接口约定。
+- PDF 导入通过 `Retriever.index_document()`，没有调用 B 的数据库内部实现。
+
+结论：A/B/C 的现有接口可以支持 C 开始真实联调和评测，不需要修改冻结的公共接口。
+Router 英文降级规则仍归 A；英文切分、字符偏移、页码和 BM25 全量重载归 B。
+C 只记录这些依赖的测试结果，不接管其实现。
 
 ## 组员模块现况与 C 的可用接口
 
@@ -54,14 +72,27 @@ embedding、数据库或记忆存储。
 | 工具调用追踪与步骤状态 | A | 已合入 `main`（PR #20） | 失败案例读取 `tool_results` 与 `plan` |
 | LLM MemoryManager | A | 已合入 `main`（PR #22） | RQ2 读取 memory trace 与 usage |
 | RunLogger 与评测契约 | A | 已合入 `main`（PR #19） | C 读取 `runs/*/samples.jsonl` 计算指标 |
-| PDF 解析与页码保留 | B | 已合入 `main` | 标注和引用使用真实页码 |
-| BM25 / Vector / RRF 检索 | B | 已合入 `main` | RQ1、RQ3 使用 evidence 与 retrieval_method |
+| PDF 解析与页码保留 | B | PR #24 已合入 `main` | 标注和引用使用真实页码与 chunk_id |
+| BM25 / Vector / RRF 检索 | B | PR #24 已合入 `main` | RQ1、RQ3 使用 evidence 与 retrieval_method |
 | PostgreSQL MemoryStore | B | 已合入 `main`（PR #17） | UI 和 RQ2 只通过 MemoryStore 接口访问 |
 | Claim Verification | C | 已合入 `main`（PR #9） | RQ3 使用 claims 与 supporting_evidence |
-| Streamlit UI V1 | C | 本地完成，待 PR | 展示回答、引用、claim、文档和记忆 |
+| Streamlit UI V1 | C | PR #23 已合入 `main` | 展示回答、引用、claim、文档和记忆 |
 
-结论：A/B 已提供 C 开展真实联调和评测所需的主要数据接口。C 不需要继续等待，
+结论：A/B 已提供 C 开展真实联调和评测所需的数据接口。C 不需要继续等待，
 也不需要修改 `app/core/`、`app/agent/`、`app/retrieval/` 或 `app/memory/`。
+
+### 当前复现条件
+
+代码层面的 PDF、Hybrid Retrieval、接口契约、Verifier 与 UI 测试均已通过。
+真实 B2/B4 联调仍需要在执行机器上补齐：
+
+- `data/raw/` 中约定的三份 Demo PDF；
+- PostgreSQL/pgvector；
+- Ollama 的 `nomic-embed-text`；
+- 若要评价答案质量和英文 Router，需要可用的聊天模型 API。
+
+缺少聊天 API 时，真实 Retrieval 仍可单独用 B2 验证；固定 Mock Answer 与 Evidence
+不一致而被 Verifier 判为 unsupported 属于预期行为。
 
 ## 已确认的评测约定
 
@@ -89,13 +120,15 @@ embedding、数据库或记忆存储。
 
 ## 下一步执行顺序
 
-1. 推送 `feat/c-streamlit-ui-v1` 并提交 UI V1 PR。
-2. 新建独立评测分支，定义 JSONL schema 并先提交 5-10 条可审查样例。
-3. 编写 B1-B4 批量运行脚本，调用现有 `RunLogger`，不自行重复落盘逻辑。
-4. 编写 RQ1-RQ4 指标计算和结果表导出。
-5. 在 Real 环境完成一次小规模 smoke run，再扩展到完整标注集并重复三次。
-6. 将 runs 汇总接入 Streamlit 实验结果页。
-7. 准备固定 Demo 问题、unsupported claim 示例和失败案例文档。
+1. 在 `feat/c-evaluation-v1` 定义 JSONL schema，并先提交 5-10 条可审查样例。
+2. 编写 B1-B4 批量运行脚本，调用现有 `RunLogger`，不重复实现落盘逻辑。
+3. 编写 RQ1-RQ4 指标计算、混淆矩阵和结果表导出。
+4. 补充 C 侧接口回归测试：Evidence 页码/文本展示、无效 supporting ID 过滤、
+   当前用户 Memory ID 的更新与删除。
+5. 按 `docs/b-demo.md` 在 Real B2 完成小规模 smoke run，再运行 B3/B4。
+6. 将 `runs/` 汇总接入 Streamlit 实验结果页。
+7. 扩展完整标注集，正式实验重复三次并报告均值 ± 标准差。
+8. 准备固定 Demo 问题、unsupported claim 示例和 `docs/failure-cases.md`。
 
-当前无代码接口阻塞。Real 实验仍要求组员共同提供可用的 API key、PostgreSQL、
-Ollama embedding 和统一测试 PDF，但这些属于运行环境，不属于 C 的实现任务。
+当前无代码接口阻塞。C 可以立即开始数据集和离线评测工具开发；Real smoke run
+取决于统一测试 PDF、PostgreSQL、Ollama embedding 和聊天模型配置。
