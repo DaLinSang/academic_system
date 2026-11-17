@@ -30,7 +30,7 @@
 uv sync --python 3.11
 
 # 2) 环境变量
-cp .env.example .env        # 填入 DEEPSEEK_API_KEY，不填也能跑 Mock
+cp .env.example .env        # 选择 HKU / DeepSeek；不填 key 也能跑 Mock
 
 # 3) 跑通阶段 0 的 Mock 全链路（无需 API key、无需数据库）
 uv run python -m app.demo
@@ -78,6 +78,10 @@ uv run python -m app.demo --real -m B2 -q "讲义里 RRF 是怎么算的？"
 
 `--real` 与默认的 Mock 模式用的是**同一套 Orchestrator**，只是注入的实现不同。
 没有配 key 时会自动退回 `MockLLM`，路由与规划走关键词降级，链路仍可跑通。
+
+不同成员可以在自己的 `.env` 中独立选择 `LLM_PROVIDER=hku` 或
+`LLM_PROVIDER=deepseek`，无需修改代码。HKU、DeepSeek 和 Mock 的完整配置、
+认证方式与排错说明见 [`app/llm/README.md`](app/llm/README.md)。
 
 用 5434 是为了避开本机其它项目的 5432/5433。
 

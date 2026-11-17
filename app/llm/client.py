@@ -54,6 +54,7 @@ class OpenAICompatibleLLM:
         model: str,
         timeout: int | None = None,
         max_retries: int | None = None,
+        default_headers: dict[str, str] | None = None,
     ) -> None:
         if not api_key:
             raise LLMError(
@@ -65,7 +66,12 @@ class OpenAICompatibleLLM:
         self.model = model
         self.timeout = timeout or settings.llm.timeout
         self.max_retries = max_retries if max_retries is not None else settings.llm.max_retries
-        self._client = OpenAI(api_key=api_key, base_url=base_url, timeout=self.timeout)
+        self._client = OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=self.timeout,
+            default_headers=default_headers,
+        )
 
     # ------------------------------------------------------------------ #
     def generate(
@@ -145,11 +151,18 @@ def get_llm(provider: str | None = None, *, force_new: bool = False) -> LLM:
     if _cache is not None and not force_new and provider is None:
         return _cache
 
-    api_key, base_url, model = settings.llm.resolve(provider)
+    provider_name = (provider or settings.llm.provider).lower()
+    api_key, base_url, model = settings.llm.resolve(provider_name)
     if not api_key:
         llm: LLM = MockLLM()
     else:
-        llm = OpenAICompatibleLLM(api_key=api_key, base_url=base_url, model=model)
+        default_headers = {"api-key": api_key} if provider_name == "hku" else None
+        llm = OpenAICompatibleLLM(
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            default_headers=default_headers,
+        )
 
     if provider is None:
         _cache = llm
