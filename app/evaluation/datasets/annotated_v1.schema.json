@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Academic System Annotated Evaluation Sample v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "question",
+    "user_id",
+    "turn_index",
+    "gold_route",
+    "gold_need_retrieval",
+    "gold_sources",
+    "gold_pages",
+    "gold_claims",
+    "expected_memory",
+    "tags"
+  ],
+  "properties": {
+    "id": {"type": "string", "minLength": 1},
+    "question": {"type": "string", "minLength": 1},
+    "user_id": {"type": "string", "minLength": 1},
+    "turn_index": {"type": "integer", "minimum": 0},
+    "gold_route": {
+      "enum": ["direct", "document_retrieval", "complex_task"]
+    },
+    "gold_need_retrieval": {"type": "boolean"},
+    "gold_sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file_name", "page_number"],
+        "properties": {
+          "file_name": {"type": "string", "minLength": 1},
+          "page_number": {"type": "integer", "minimum": 1}
+        }
+      }
+    },
+    "gold_pages": {
+      "type": "array",
+      "items": {"type": "integer", "minimum": 1}
+    },
+    "gold_claims": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "expected_memory": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "tags": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    }
+  }
+}
