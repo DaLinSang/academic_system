@@ -12,9 +12,9 @@
 | `comp7608_lecture_agent.pdf` | 与其他讲义做多文档比较 |
 | `rag_paper.pdf` | 16 页文字型论文，长文本检索与页码引用测试 |
 
-已做本地解析检查：论文首页和第二页分别提取出 2,988、4,570 个字符；两份课件约 73/79 页，含大量图示，页面可提取文本量较少。此次新切分器本地解析得到 74、79、92 chunks（依次为 Agent 讲义、RAG 讲义、RAG 论文），三份文件都没有 NUL 字符残留。不同 PDF 或解析器版本可能让计数变化。
+已做本地解析检查：论文首页和第二页分别提取出 2,988、4,570 个字符；两份课件约 73/79 页，含大量图示，页面可提取文本量较少。此次新切分器本地解析和实际重新索引均得到 74、79、93 chunks（依次为 Agent 讲义、RAG 讲义、RAG 论文），共 246 个，三份文件都没有 NUL 字符残留。不同 PDF 或解析器版本可能让计数变化。
 
-本次切分逻辑更新后，建议重新运行索引脚本，再记录新的 chunk 数量；原计数仅是更新前的本地观测，不作为验收目标。PDF 应选可复制文字的版本；图片页需要先 OCR，当前解析器不会识别图片里的字。
+PDF 应选可复制文字的版本；图片页需要先 OCR，当前解析器不会识别图片里的字。
 
 ## 2. 启动前检查
 
@@ -57,6 +57,8 @@ uv run python -m app.demo --real -m B2 -q "According to the paper, what problem 
 ```
 
 检查 `④ 检索证据` 是否出现 `rag_paper.pdf` 和页码。再测试多文档问题：
+
+本机在 PostgreSQL `healthy`、Ollama 直连正常的条件下，三份文件已成功索引。上述英文 B2 问题的前三条证据来自 `rag_paper.pdf` 第 1、1、2 页，`via=rrf`，证明真实混合检索返回了带页码的 Evidence；答案仍为固定 Mock 文本，因为没有配置聊天 API key。
 
 ```bash
 uv run python -m app.demo --real -m B2 -q "Compare the RAG explanations in the lecture slides and the paper."
