@@ -67,6 +67,19 @@ embedding、数据库或记忆存储。
 - 已用 Mock B1/B4 完成端到端 smoke run
 - 明确 MockRouter 结果不能用于评价 A 的英文 Router 修复
 
+### RQ1-RQ4 Metrics V1
+
+- 新增 `app/evaluation/metrics.py`，读取 A 的 `meta.json` 与 `samples.jsonl`
+- 使用 `_sample_index` 和 `meta.extra.sample_ids` 对齐冻结数据集，防止筛选运行后错位
+- RQ1 输出 route accuracy、不必要检索率、漏检率和固定 3×3 混淆矩阵
+- RQ2 输出 memory hit rate、memory write rejection rate 和逐样本跨会话结果
+- RQ3 输出 claim support rate、citation precision，并使用 `gold_sources` 计算
+  文件名+页码级 citation recall
+- RQ4 输出单查询 token、成本、延迟及错误恢复成功率
+- 零分母统一输出 JSON `null`，避免把“不可计算”误报成 0
+- 无 Evidence 样本不进入 claim 支持率分母，符合评测契约的数据坑说明
+- 新增合成单元测试，覆盖四个 RQ、混淆矩阵、文件页引用和零分母行为
+
 ## 2026-11-17 合并后复核
 
 PR #24 合入后，C 已重新核对 `docs/b-demo.md` 第 6 节接口：
@@ -146,7 +159,7 @@ A 的英文 Router 与 `need_memory` 修复已通过 PR #27 合入 `main`。后�
 
 1. 请团队审核 `annotated_v1` 的 12 条问题、gold route、gold sources 和 claims。
 2. 请团队审核 B1-B4 batch runner 的参数和 run metadata。
-3. 编写 RQ1-RQ4 指标计算、混淆矩阵和结果表导出。
+3. 团队审核 `metrics.json` 字段和零分母使用 `null` 的约定。
 4. 继续补充 C 侧接口回归测试：Evidence 页码/文本展示、无效 supporting ID 过滤、
    当前用户 Memory ID 的更新与删除。
 5. 按 `docs/b-demo.md` 在 Real B2 完成小规模 smoke run，再运行 B3/B4。
@@ -154,5 +167,5 @@ A 的英文 Router 与 `need_memory` 修复已通过 PR #27 合入 `main`。后�
 7. 扩展完整标注集，正式实验重复三次并报告均值 ± 标准差。
 8. 准备固定 Demo 问题、unsupported claim 示例和 `docs/failure-cases.md`。
 
-当前无代码接口阻塞。首批数据集和离线校验已完成；Real B2 smoke run 取决于
+当前无代码接口阻塞。首批数据集、批量运行器和 RQ1-RQ4 指标计算已完成；Real B2 smoke run 取决于
 PostgreSQL 和 Ollama embedding，真实答案质量及 B3/B4 完整评测还需要聊天模型配置。

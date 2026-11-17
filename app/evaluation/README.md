@@ -58,3 +58,32 @@ Samples keep their JSONL order within a mode, so the two memory samples share a
 MemoryStore in B3/B4 while different baselines cannot contaminate one another.
 The script never implements a second output format; it delegates all raw result
 writing to A's `RunLogger`.
+
+## RQ1-RQ4 Metrics
+
+Calculate the frozen metrics after a run finishes:
+
+```bash
+uv run python -m app.evaluation.metrics runs/<run_id>
+```
+
+The command reads `meta.json` and `samples.jsonl`, aligns rows to the annotated
+dataset using `_sample_index` plus `meta.extra.sample_ids`, and writes a stable
+`metrics.json` beside the raw files.
+
+The report contains:
+
+- RQ1 route accuracy, unnecessary/missed retrieval rates, and a 3x3 confusion matrix.
+- RQ2 memory hit rate, write rejection rate, and per-sample cross-session fields.
+- RQ3 supported-claim rate plus citation precision and file-page recall.
+- RQ4 tokens, cost, latency per query, and error recovery rate.
+
+Undefined metrics use JSON `null`, not zero. For example, a run without proposed
+memory writes has no write-rejection denominator. Claim support excludes samples
+with no evidence, as required by `docs/eval-contract.md`. Citation recall uses
+`gold_sources` rather than page numbers alone, so same-numbered pages in different
+PDFs are not confused.
+
+```bash
+uv run pytest tests/test_evaluation_metrics.py -q
+```
