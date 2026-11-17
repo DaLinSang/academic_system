@@ -10,6 +10,7 @@ from app.core.types import DocumentChunk
 DEFAULT_CHUNK_SIZE = 800
 DEFAULT_OVERLAP = 100
 
+
 def split_text(
     text: str,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
@@ -43,6 +44,12 @@ def split_text(
 
     while start < text_length:
         end = min(start + chunk_size, text_length)
+        # Prefer a nearby word boundary in text-heavy PDFs; preserve the
+        # original characters so offsets still point into the extracted page.
+        if end < text_length and normalized_text[end - 1].isalnum() and normalized_text[end].isalnum():
+            boundary = normalized_text.rfind(" ", start + chunk_size * 3 // 4, end)
+            if boundary > start:
+                end = boundary + 1
         chunk_text = normalized_text[start:end]
 
         if chunk_text.strip():
@@ -51,7 +58,18 @@ def split_text(
         if end == text_length:
             break
 
-        start = end - overlap
+        next_start = max(start + 1, end - overlap)
+        if (
+            next_start < text_length
+            and normalized_text[next_start - 1].isalnum()
+            and normalized_text[next_start].isalnum()
+        ):
+            boundary = normalized_text.rfind(
+                " ", max(start, next_start - chunk_size // 4), next_start
+            )
+            if boundary >= start:
+                next_start = boundary + 1
+        start = next_start
 
     return chunks
 
@@ -92,6 +110,7 @@ def parse_pdf(
     for page_number, page in enumerate(reader.pages, start=1):
         try:
             raw_text = page.extract_text() or ""
+            raw_text = raw_text.replace("\x00", "")
         except Exception as exc:
             raise IngestionError(
                 f"Failed to extract page {page_number} from {pdf_path}"

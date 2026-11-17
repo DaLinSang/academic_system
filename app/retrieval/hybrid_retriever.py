@@ -178,8 +178,9 @@ class HybridRetriever:
         except Exception as exc:
             raise RetrievalError(f"Failed to index document: {exc}") from exc
 
-        self._bm25._documents[resolved_document_id] = chunks
-        self._bm25._rebuild_index()
+        # The current instance may not have loaded other persisted PDFs yet.
+        # Reload the full corpus on the next query to avoid hiding them.
+        self._bm25_loaded = False
         return len(chunks)
 
     def _vector_results(
@@ -221,33 +222,33 @@ class HybridRetriever:
         }
         vector_scores = {chunk_id: score for chunk_id, score in vector_results}
 
-        for chunk_id, _ in vector_results:
-            if chunk_id in evidence_by_id:
-                continue
-
+        missing_ids = [
+            chunk_id for chunk_id, _ in vector_results if chunk_id not in evidence_by_id
+        ]
+        if missing_ids:
             try:
                 with self._connect() as conn:
-                    row = conn.execute(
+                    rows = conn.execute(
                         """
                         SELECT chunk_id, document_id, file_name, page_number, text
                         FROM document_chunks
-                        WHERE chunk_id = %s
+                        WHERE chunk_id = ANY(%s)
                         """,
-                        (chunk_id,),
-                    ).fetchone()
+                        (missing_ids,),
+                    ).fetchall()
             except RetrievalError:
                 raise
             except Exception as exc:
                 raise RetrievalError(f"Failed to load vector evidence: {exc}") from exc
 
-            if row is not None:
+            for row in rows:
                 evidence_by_id[row[0]] = Evidence(
                     chunk_id=row[0],
                     document_id=row[1],
                     file_name=row[2],
                     page_number=row[3],
                     text=row[4],
-                    score=vector_scores[chunk_id],
+                    score=vector_scores[row[0]],
                     retrieval_method=RetrievalMethod.VECTOR,
                 )
 
