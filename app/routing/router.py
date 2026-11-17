@@ -50,12 +50,21 @@ _SYSTEM_PROMPT = """你是学术知识助手的路由器。判断用户请求属
 
 判断规则：
 1. 出现"比较/对比/综述/研究计划/写一份/报告/梳理"等要求产出多段结论的，归为 complex_task。
-2. 指向具体材料（"这篇论文""讲义里""第几页""我的笔记"）的，归为 document_retrieval。
+   英文同理：compare / contrast / literature review / research plan / summarize several documents。
+2. 指向具体材料（"这篇论文""讲义里""第几页""我的笔记"，或英文 this paper / the lecture /
+   according to / in the PDF / uploaded document）的，归为 document_retrieval。
 3. 纯概念解释且用户没有提供文档的（"什么是 attention"），归为 direct。
 4. need_retrieval：是否需要检索用户文档。
 5. need_planning：是否只在 complex_task 时为 true。
 6. reason 用一句中文说明依据，会写进实验日志，必须具体，不要写"根据规则"。
 7. confidence 是 0 到 1 的小数。
+8. need_memory 表示"本轮读到的记忆是否对回答有帮助"。注意：是否**读取**记忆由
+   Orchestrator 的 enable_memory 开关决定（B3/B4 开、B1/B2 关），与本字段无关；
+   本字段只是路由对已有记忆有用性的判断。没有记忆时填 false。
+9. 英文用户有文档时，不要把所有问句都当成通用知识。像 "What problem does X solve?"、
+   "What are the limitations of X?" 这类针对某个具体方法的评价性问题，用户通常期待基于
+   材料回答，应归 document_retrieval。只有闲聊、翻译、润色、天气等明显与文档无关的请求
+   才归 direct。
 
 只输出下面这个 json 对象，不要输出任何其他内容：
 {"route": "direct|document_retrieval|complex_task", "need_retrieval": true, "need_memory": false, "need_planning": false, "confidence": 0.0, "reason": ""}"""
@@ -64,13 +73,29 @@ _SYSTEM_PROMPT = """你是学术知识助手的路由器。判断用户请求属
 # 关键词启发式：只作为降级路径，不参与正常路由
 # --------------------------------------------------------------------------- #
 _COMPLEX_KEYWORDS = (
+    # 中文
     "比较", "对比", "综述", "研究计划", "写一份", "写个", "报告", "梳理", "多个", "几篇", "总结一下",
+    # 英文：B 的 Demo PDF 全是英文，无 key 时降级路径必须能识别这些意图
+    "compare", "comparison", "contrast", "summarize", "summary of",
+    "literature review", "research plan", "write a report", "write an essay",
+    "overview of", "survey of", "multiple papers", "several documents",
 )
 # 只保留**强文档指代**。"什么是""定义""提到"这类词太泛——
 # "什么是 attention" 是典型的不需要检索的问题，若把它算作检索，
 # RQ1 的"不必要检索率"会被系统性抬高，指标失去意义。
 _RETRIEVAL_KEYWORDS = (
+    # 中文
     "这篇", "文档", "论文", "讲义", "笔记", "第几页", "哪一页", "课件", "我上传", "附件",
+    # 英文（小写匹配，见 _rule_based_route）
+    "this paper", "the paper", "the article", "the document", "the lecture",
+    "lecture notes", "these notes", "my notes", "the slides", "the pdf",
+    "in the pdf", "according to", "based on the document", "from the paper",
+    "uploaded", "attachment", "attached paper", "attached document",
+    "which page", "what page", "page 9",
+    # Issue #25 的原句："What problem does Retrieval-Augmented Generation solve?"
+    # 没有显式文档指代，但在有文档的语境下是典型的"问材料内容"。
+    "what problem does", "what problems does", "what are the limitations",
+    "retrieval-augmented", "retrieval augmented",
 )
 
 # 模型可能给出的别名，统一映射到 RouteType
@@ -203,8 +228,12 @@ def _heuristic_route(question: str, has_documents: bool) -> RouteDecision:
     也不要漏掉一个本该查文档的问题（后者对用户体验伤害更大）。
     """
     text = question.strip()
+    # casefold 对中文无影响，只让英文关键词大小写不敏感。
+    # Issue #25：B 的 Demo PDF 全是英文，降级路径此前只认中文，导致英文问题
+    # 被误判成 direct、检索根本不触发。
+    lowered = text.casefold()
 
-    if any(keyword in text for keyword in _COMPLEX_KEYWORDS):
+    if any(keyword in lowered for keyword in _COMPLEX_KEYWORDS):
         return RouteDecision(
             route=RouteType.COMPLEX_TASK,
             need_retrieval=has_documents,
@@ -213,7 +242,7 @@ def _heuristic_route(question: str, has_documents: bool) -> RouteDecision:
             confidence=0.5,
         )
 
-    if has_documents and any(keyword in text for keyword in _RETRIEVAL_KEYWORDS):
+    if has_documents and any(keyword in lowered for keyword in _RETRIEVAL_KEYWORDS):
         return RouteDecision(
             route=RouteType.DOCUMENT_RETRIEVAL,
             need_retrieval=True,
