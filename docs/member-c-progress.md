@@ -57,6 +57,16 @@ embedding、数据库或记忆存储。
 - 对真实 PDF 页码完成文本提取与页面渲染复核
 - 增加数据完整性、路由语义、PDF 页码范围和跨会话顺序测试
 
+### B1-B4 Batch Runner V1
+
+- 支持从冻结 JSONL 读取样本并校验必需字段与重复 ID
+- 支持 `--modes`、`--top-k`、`--limit`、`--real` 和自定义 runs 目录
+- 每个模式创建独立 Orchestrator 和 RunLogger 目录，避免基线间状态污染
+- 同一模式内保持数据集顺序，使两轮 RQ2 样本共享 MemoryStore
+- 将样本 ID 顺序和 Mock/Real runtime 写入 run metadata
+- 已用 Mock B1/B4 完成端到端 smoke run
+- 明确 MockRouter 结果不能用于评价 A 的英文 Router 修复
+
 ## 2026-11-17 合并后复核
 
 PR #24 合入后，C 已重新核对 `docs/b-demo.md` 第 6 节接口：
@@ -135,7 +145,7 @@ A 的英文 Router 与 `need_memory` 修复已通过 PR #27 合入 `main`。后�
 ## 下一步执行顺序
 
 1. 请团队审核 `annotated_v1` 的 12 条问题、gold route、gold sources 和 claims。
-2. 编写 B1-B4 批量运行脚本，调用现有 `RunLogger`，不重复实现落盘逻辑。
+2. 请团队审核 B1-B4 batch runner 的参数和 run metadata。
 3. 编写 RQ1-RQ4 指标计算、混淆矩阵和结果表导出。
 4. 继续补充 C 侧接口回归测试：Evidence 页码/文本展示、无效 supporting ID 过滤、
    当前用户 Memory ID 的更新与删除。
