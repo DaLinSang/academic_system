@@ -94,6 +94,8 @@
 - `app/agent/orchestrator.py`：`llm` 类步骤由 PENDING 改为 SKIPPED，如实反映"有意跳过、由 AnswerGenerator 统一完成"
 - `app/llm/client.py`：失败重试的等待时间计入 `Usage.latency_ms`，并暴露 `last_retries` / `last_retry_latency_ms`（Issue #48）
 - `app/agent/orchestrator.py`：`_absorb_usage()` 把重试次数与额外耗时写进 trace
+- `app/llm/client.py`：失败重试的等待时间计入 `Usage.latency_ms`，并暴露 `last_retries` / `last_retry_latency_ms`（Issue #48）
+- `app/agent/orchestrator.py`：`_absorb_usage()` 把重试次数与额外耗时写进 trace
 - `app/routing/router.py`：降级关键词加入英文（Issue #25）。此前只认中文，B 的英文 PDF 在无 key 时全部被误判为 direct
 - `app/routing/router.py`：降级匹配改为 `casefold()`，英文大小写不敏感
 - `app/routing/router.py`：系统提示词补充英文文档问题的判断规则，`need_memory` 语义改为「已有记忆是否有帮助」，并明确读取开关是 `enable_memory`
