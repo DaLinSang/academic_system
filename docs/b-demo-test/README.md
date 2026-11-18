@@ -96,6 +96,48 @@ git diff --check
 | B：`app/memory/postgres_store.py`、`app/retrieval/` | 仅在 trace 显示候选已接受、但 `add`/`search` 不正常时修存储；与 A 一起检查 T05/T07 的检索候选质量。 |
 | C：`app/ui/`、`app/verification/` | 显示记忆写入状态及关闭/为空的区别；处理 T07 的无关引用与“无证据”校验文案；检查 T06 claim 截断。 |
 
-团队已有 [Issue #31](https://github.com/DaLinSang/academic_system/issues/31) 追踪长期偏好写入和反馈，[Issue #32](https://github.com/DaLinSang/academic_system/issues/32) 追踪会话持久化及用户隔离；本次测试为这两项提供新的复现样本，不重复创建同类 Issue。[Issue #34](https://github.com/DaLinSang/academic_system/issues/34) 追踪无关检索候选在拒答时仍作为引用和校验依据的问题。本 PR 只提交测试文档，不关闭功能缺陷 Issue。
+团队已有 [Issue #31](https://github.com/DaLinSang/academic_system/issues/31) 追踪长期偏好写入和反馈，[Issue #32](https://github.com/DaLinSang/academic_system/issues/32) 追踪会话持久化及用户隔离；本次测试为这两项提供新的复现样本，不重复创建同类 Issue。[Issue #34](https://github.com/DaLinSang/academic_system/issues/34) 追踪无关检索候选在拒答时仍作为引用和校验依据的问题。T01 的时效性事实问题不属于文档学习助手的主验收场景；T07 的“找不到文档依据却展示无关页码”仍与主场景直接相关。本 PR 只实现下述 B 模块增强，不关闭这些跨模块缺陷 Issue。
 
-本测试记录是诊断材料，**没有**修改公共接口 `app/core/types.py` 或 `app/core/interfaces.py`。需要改接口时按团队三人确认流程另提 PR。
+## 7. 本 PR 的 B 模块改动（供 reviewer 对照）
+
+### 7.1 PDF 解析与 OCR
+
+`app/ingestion/pdf_parser.py` 在 `pypdf` 提取不到文字的页面提供可选 OCR：`auto` 默认只处理空文字页，`off` 完全关闭，`force` 对每页 OCR。调用系统上的 `pdftoppm` 将原 PDF 的指定页面渲染为 PNG，再用 `tesseract` 识别；识别出的文字仍沿用同一页码、chunk ID、字符切分规则和 NUL 清理。英语默认 `eng`，可通过环境变量 `PDF_OCR_LANG` 切换已安装的语言数据。没有安装两项系统工具时，`auto` 仍会跳过空页；显式 `force` 给出清晰的 `IngestionError`。索引整篇无可读文字的 PDF 时直接报错，不把 0 个 chunk 当成“成功索引”。
+
+**对 A/C 的影响**：现有 `HybridRetriever.index_document(pdf_path)` 调用方式不变；上传扫描件时，若运行机器已安装两项 OCR 命令便能从空文字页提取内容。若工具未安装，界面应把 `IngestionError` 呈现为“无法提取可搜索文字”，提醒用户上传可搜索 PDF 或配置 OCR。OCR 可能识别错字，不能把自动识别后的术语或公式视为人工校对过。
+
+### 7.2 查询时向量服务故障的降级
+
+`app/retrieval/hybrid_retriever.py` 先加载已有 BM25 语料，再执行 BM25 与向量检索。如果 Ollama embedding 或 pgvector 查询失败，返回已有 BM25 候选，保留 `Evidence` 中的来源和页码，并把 `retrieval_method` 标为 `BM25`；原因记录在同一 retriever 实例的 `last_warning`。正常混合检索仍按 BM25、向量、RRF 原流程执行，下次成功查询会清除旧 warning。**数据库不可连接时不会假装已检索成功**，因为 BM25 语料本身来自数据库。
+
+**对 A/C 的影响**：公共 `Retriever.retrieve(query, top_k)` 签名不变。A 的工厂仍可直接注入 `HybridRetriever`。若希望 UI 明示“本轮只用了 BM25”，A 可在 Orchestrator 的检索阶段读取 `retriever.last_warning` 并传递至状态或 trace，C 再呈现；这属于 A/C 的编排和界面文件，本 PR 没有代改。检索降级可能损失中英跨语言召回，不能称为完整混合检索。索引 PDF 时仍需要 Ollama；没有 embedding 无法写入 vector(768)。
+
+### 7.3 空记忆用户的读取优化
+
+`app/memory/postgres_store.py` 的 `search()` 先按 `user_id`、`tiers` 做数据库存在性检查。查无候选立即返回空列表，不调用 Ollama，避免新用户第一次问答白白生成 query embedding；有候选时仍按原来的 0.3 相似度阈值和 relevance/recency/importance 权重排序。**这不会改变何时写长期记忆**。T02/T09 的写入缺陷继续由 A 按 Issue #31 排查 `LLMMemoryManager` 候选、过滤与 `memory_write` trace。
+
+### 7.4 代码边界与接口
+
+改动限于 B 的 `app/ingestion/`、`app/retrieval/`、`app/memory/postgres_store.py`、相应测试和 README。`app/core/types.py`、`app/core/interfaces.py` 没有修改；`MemoryStore`、`Retriever`、`Evidence` 的公共契约保持原状。A 的路由、MemoryManager 和工具编排以及 C 的 Streamlit、Verifier 不在本次代码改动范围内。
+
+## 8. 自动验证与人工补测
+
+在项目根目录运行：
+
+```bash
+uv run pytest -q
+uv run ruff check .
+git diff --check
+```
+
+新增测试覆盖：扫描空页走 OCR 且沿用 PDF 页码；强制 OCR 缺少系统工具时报错；整篇不可读的 PDF 不建立空索引；向量服务失败时 BM25 仍返回可引用的 `Evidence`，并在下一次成功查询清理 warning；空用户查记忆不请求 Ollama。已有全量测试继续保护 chunk 切分、混合 RRF、真实 PostgreSQL 记忆增删改查与用户隔离。
+
+本机未安装 Tesseract，**真实图片型 PDF 的识别精度与速度尚未端到端验证**。装好 `pdftoppm`、`tesseract` 后，建议 A/C/B 共用一份 1–2 页扫描样例：索引、核对提取文字、问一个明确出现在图像文字中的问题、检查页码引用；再停掉 Ollama，确认已有索引能回退到 BM25，并在 UI 提示降级。测试用的 Demo PDF 若被 `.gitignore` 排除，其他人须自行准备相同文件或使用已纳入仓库的三份样例。不要把 API key 或私人记忆内容写进测试输出。
+
+## 9. 外部工具与交付剩余工作
+
+Proposal 描述的“外部 tools”包括文档检索、长期记忆、PDF 解析、Web/学术搜索和代码执行。当前代码中，B 提供 PDF/检索/记忆能力；A 的 Orchestrator 负责决定与执行工具，现阶段实际执行的是 retrieval，并把调用记录写入 `AgentState.tool_results`。Planner 可以规划 `web_search` 等步骤，但没有实际 Web/代码执行器；UI 也未单列工具调用轨迹。因此界面看不到“外部搜索/执行代码”，不能把它写成已完成能力。仓库主页现阶段范围也明确列出这些限制；若最终展示仍要求全部 Proposal 工具，需 A 确认优先级和执行方案，C 再展示过程。
+
+主交付路径还需：A 完成 Issue #31 的偏好/任务状态保存和跨轮读取联调；A/C 完成文档未命中时的相关性判断、拒答和引用呈现；C 验证历史会话与用户隔离（Issue #32）以及展示 B1–B4 对照；全组用固定 PDF 和相同问题做最终 demo 与实验。建议先闭环“可上传、可检索、能引用、记得住、找不到时能诚实回答”，再决定是否追加 Web/代码执行工具。
+
+本 PR **没有**修改公共接口 `app/core/types.py` 或 `app/core/interfaces.py`。需要改这两个文件时仍按团队三人确认流程另提 PR。

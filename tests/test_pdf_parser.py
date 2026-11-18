@@ -120,6 +120,34 @@ def test_parse_pdf_preserves_page_numbers(monkeypatch, tmp_path) -> None:
     assert chunks[1].chunk_id == "demo-paper:p2:c0"
 
 
+def test_parse_pdf_ocr_blank_page_preserves_citation_page(monkeypatch, tmp_path) -> None:
+    pdf_path = tmp_path / "scanned.pdf"
+    pdf_path.write_bytes(b"fake pdf content")
+    monkeypatch.setattr(pdf_parser, "PdfReader", lambda _: FakeReader([FakePage("")]))
+    monkeypatch.setattr(
+        pdf_parser,
+        "_ocr_page",
+        lambda path, page_number, required: "Recognized from image",
+    )
+
+    chunks = pdf_parser.parse_pdf(str(pdf_path))
+
+    assert len(chunks) == 1
+    assert chunks[0].text == "Recognized from image"
+    assert chunks[0].page_number == 1
+    assert chunks[0].chunk_id == "scanned:p1:c0"
+
+
+def test_ocr_force_reports_missing_system_tools(monkeypatch, tmp_path) -> None:
+    pdf_path = tmp_path / "scanned.pdf"
+    pdf_path.write_bytes(b"fake pdf content")
+    monkeypatch.setattr(pdf_parser, "PdfReader", lambda _: FakeReader([FakePage("")]))
+    monkeypatch.setattr(pdf_parser.shutil, "which", lambda command: None)
+
+    with pytest.raises(pdf_parser.IngestionError, match="pdftoppm and tesseract"):
+        pdf_parser.parse_pdf(str(pdf_path), ocr_mode="force")
+
+
 def test_parse_pdf_creates_multiple_chunks_for_long_page(
     monkeypatch,
     tmp_path,

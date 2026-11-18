@@ -87,6 +87,8 @@ Orchestrator 生成回答后
 
 `search()` 先过滤相似度低于 0.3 的记忆，减少误召回，再综合向量相似度、更新时间衰减和候选的 `importance` 排序。默认权重为 0.6、0.2、0.2；近期记忆的 recency 分数按 30 天时间常数衰减。可在构造 `PostgresMemoryStore` 时调整阈值和权重。
 
+现在 `search()` 会先在数据库按 `user_id` 和 `tiers` 检查是否存在候选；不存在时立即返回 `[]`，不会请求 Ollama。这样首次使用或尚无长期记忆的用户，不会为一次空查询付出 embedding 延迟，也不会因该次查询触发 Ollama 错误。已有记忆的用户仍使用原有向量相似度、时间和重要性排序。这个优化只影响读取；“是否值得保存、保存哪一类”仍由 A 的 `MemoryManager` 决定，Issue #31 继续追踪保存决策问题。
+
 ## 与 Agent 的接口调用
 
 `build_stage1_orchestrator()` 会注入真实的 `PostgresMemoryStore`。Orchestrator 仍只调用 `MemoryStore` Protocol 的方法，不依赖存储类内部实现。`build_mock_orchestrator()` 继续使用 `MockMemoryStore`，因此离线演示和单元测试不需要数据库。
