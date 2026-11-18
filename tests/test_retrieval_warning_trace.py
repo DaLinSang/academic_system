@@ -7,7 +7,7 @@ C 算 RQ1/RQ3 时会把两个不同的系统混在一起统计。
 
 from __future__ import annotations
 
-from app.agent.factory import build_orchestrator, build_mock_orchestrator
+from app.agent.factory import build_mock_orchestrator, build_orchestrator
 from app.agent.orchestrator import MODE_PRESETS
 from app.core.mocks import (
     MockAnswerGenerator,
