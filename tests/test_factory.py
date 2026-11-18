@@ -31,7 +31,7 @@ from app.memory import PostgresMemoryStore
 from app.planning.planner import LLMPlanner
 from app.retrieval import HybridRetriever
 from app.routing.router import LLMRouter, RuleBasedRouter
-from app.verification import LexicalVerifier
+from app.verification import SemanticVerifier
 
 
 # --------------------------------------------------------------------------- #
@@ -67,7 +67,7 @@ def test_build_stage1_wires_real_components():
     assert isinstance(orch.router, LLMRouter)
     assert isinstance(orch.planner, LLMPlanner)
     assert isinstance(orch.retriever, HybridRetriever)
-    assert isinstance(orch.verifier, LexicalVerifier)
+    assert isinstance(orch.verifier, SemanticVerifier)
     assert isinstance(orch.answer_generator, LLMAnswerGenerator)
     assert isinstance(orch.memory_store, PostgresMemoryStore)
     assert isinstance(orch.memory_manager, LLMMemoryManager)

@@ -8,8 +8,17 @@ import pytest
 from app.agent.factory import build_mock_orchestrator
 from app.agent.orchestrator import MODE_PRESETS
 from app.core.interfaces import Verifier
-from app.core.types import ClaimStatus, Evidence, RetrievalMethod
-from app.verification import LexicalVerifier, split_claims
+from app.core.types import (
+    AgentState,
+    ClaimStatus,
+    Evidence,
+    LLMResponse,
+    RetrievalMethod,
+    RouteDecision,
+    RouteType,
+    Usage,
+)
+from app.verification import LexicalVerifier, SemanticVerifier, split_claims
 
 _CASES = json.loads(
     (Path(__file__).parent / "fixtures" / "claim_verification_cases.json").read_text(
@@ -27,6 +36,45 @@ def _evidence(text: str, chunk_id: str = "doc:p2:c0", page: int = 2) -> Evidence
         text=text,
         score=1.0,
         retrieval_method=RetrievalMethod.MOCK,
+    )
+
+
+class _JSONLLM:
+    def __init__(self, payload: str) -> None:
+        self.payload = payload
+        self.messages = []
+
+    def generate(self, messages, temperature=0.0, max_tokens=None, json_mode=False):
+        self.messages = messages
+        assert json_mode is True
+        return LLMResponse(
+            text=self.payload,
+            model="semantic-test",
+            usage=Usage(total_tokens=42, llm_calls=1, latency_ms=5),
+        )
+
+
+def _semantic_result(
+    status: str,
+    *,
+    confidence: float = 0.9,
+    evidence_indices: list[int] | None = None,
+    can_determine: bool = True,
+    reason: str = "checked semantically",
+) -> str:
+    return json.dumps(
+        {
+            "results": [
+                {
+                    "claim_index": 0,
+                    "status": status,
+                    "confidence": confidence,
+                    "evidence_indices": evidence_indices or [],
+                    "can_determine": can_determine,
+                    "reason": reason,
+                }
+            ]
+        }
     )
 
 
@@ -56,6 +104,113 @@ def test_empty_evidence_marks_every_claim_unsupported() -> None:
     assert len(checks) == 2
     assert all(check.status == ClaimStatus.UNSUPPORTED for check in checks)
     assert all(check.supporting_evidence == [] for check in checks)
+    assert all(check.confidence == 0 for check in checks)
+    assert all((check.note or "").startswith("UNVERIFIED:") for check in checks)
+
+
+def test_semantic_verifier_supports_chinese_claim_with_english_evidence() -> None:
+    llm = _JSONLLM(_semantic_result("supported", evidence_indices=[1]))
+    verifier = SemanticVerifier(llm)
+    evidence = _evidence(
+        "Retrieval-Augmented Generation combines external retrieved documents "
+        "with a language model during generation.",
+        "rag:p1:c0",
+        1,
+    )
+
+    check = verifier.verify(
+        "RAG 将检索到的外部文档与语言模型生成过程结合起来。[1]", [evidence]
+    )[0]
+
+    assert check.status == ClaimStatus.SUPPORTED
+    assert check.supporting_evidence == ["rag:p1:c0"]
+    assert verifier.last_usage.total_tokens == 42
+    assert "different languages" in llm.messages[0]["content"]
+
+
+def test_semantic_verifier_marks_cross_language_partial_support() -> None:
+    verifier = SemanticVerifier(
+        _JSONLLM(
+            _semantic_result(
+                "partially_supported",
+                confidence=0.72,
+                evidence_indices=[1],
+                reason="The retrieval step is supported but the performance claim is not.",
+            )
+        )
+    )
+    evidence = _evidence("RAG retrieves external passages before generation.")
+
+    check = verifier.verify("RAG 会先检索资料，并保证答案完全正确。[1]", [evidence])[0]
+
+    assert check.status == ClaimStatus.PARTIALLY_SUPPORTED
+    assert check.confidence == 0.72
+    assert check.supporting_evidence == [evidence.chunk_id]
+
+
+def test_citation_marker_does_not_allow_different_evidence() -> None:
+    verifier = SemanticVerifier(
+        _JSONLLM(_semantic_result("unsupported", evidence_indices=[2]))
+    )
+    evidence = [
+        _evidence("This page discusses agent planning.", "agent:p1:c0", 1),
+        _evidence("RAG retrieves external passages.", "rag:p3:c0", 3),
+    ]
+
+    check = verifier.verify("RAG 会检索外部资料。[1]", evidence)[0]
+
+    assert check.status == ClaimStatus.UNSUPPORTED
+    assert check.supporting_evidence == []
+
+
+def test_semantic_verifier_supports_english_claim() -> None:
+    verifier = SemanticVerifier(
+        _JSONLLM(_semantic_result("supported", evidence_indices=[1]))
+    )
+    evidence = _evidence("RAG combines parametric and non-parametric memory.")
+
+    check = verifier.verify(
+        "RAG combines parametric and non-parametric memory. [1]", [evidence]
+    )[0]
+
+    assert check.status == ClaimStatus.SUPPORTED
+
+
+def test_semantic_verifier_marks_conflicting_evidence_unverified() -> None:
+    verifier = SemanticVerifier(
+        _JSONLLM(
+            _semantic_result(
+                "unsupported",
+                confidence=0.8,
+                evidence_indices=[1, 2],
+                can_determine=False,
+                reason="The two sources contradict each other.",
+            )
+        )
+    )
+    evidence = [
+        _evidence("The method always retrieves.", "a:p1:c0", 1),
+        _evidence("The method retrieves only when needed.", "b:p2:c0", 2),
+    ]
+
+    check = verifier.verify("The method always retrieves.", evidence)[0]
+
+    assert check.status == ClaimStatus.UNSUPPORTED
+    assert check.confidence == 0
+    assert check.supporting_evidence == []
+    assert (check.note or "").startswith("UNVERIFIED:")
+
+
+def test_semantic_verifier_falls_back_on_invalid_model_output() -> None:
+    verifier = SemanticVerifier(_JSONLLM("not JSON"))
+
+    check = verifier.verify(
+        "RAG combines retrieved passages with a language model response.",
+        [_evidence("RAG combines retrieved passages with a language model response.")],
+    )[0]
+
+    assert check.status == ClaimStatus.SUPPORTED
+    assert "Semantic verification unavailable" in (check.note or "")
 
 
 def test_supporting_ids_come_from_input_evidence() -> None:
@@ -98,3 +253,37 @@ def test_lexical_verifier_integrates_with_mock_b4_pipeline() -> None:
         set(check.supporting_evidence) <= evidence_ids for check in state.claims
     )
     assert state.errors == []
+
+
+def test_orchestrator_skips_direct_answer_without_document_evidence() -> None:
+    orch = build_mock_orchestrator()
+    state = AgentState(question="What is 2+2?", enable_verification=True)
+    state.route = RouteDecision(route=RouteType.DIRECT, need_retrieval=False)
+    state.draft_answer = "2+2 equals 4."
+
+    orch._run_verification(state)
+
+    assert state.claims == []
+    skip = [event for event in state.trace if event.stage == "verify" and event.event == "skip"]
+    assert skip[-1].detail["reason"] == "no_document_evidence"
+
+
+def test_orchestrator_absorbs_semantic_verifier_usage() -> None:
+    orch = build_mock_orchestrator()
+    orch.verifier = SemanticVerifier(
+        _JSONLLM(_semantic_result("supported", evidence_indices=[1]))
+    )
+    state = AgentState(question="What is RAG?", enable_verification=True)
+    state.route = RouteDecision(
+        route=RouteType.DOCUMENT_RETRIEVAL, need_retrieval=True
+    )
+    state.draft_answer = "RAG combines retrieval and generation. [1]"
+    state.evidence = [
+        _evidence("RAG combines retrieval and generation.", "rag:p1:c0", 1)
+    ]
+
+    orch._run_verification(state)
+
+    assert state.claims[0].status == ClaimStatus.SUPPORTED
+    assert state.usage.total_tokens == 42
+    assert state.usage.llm_calls == 1

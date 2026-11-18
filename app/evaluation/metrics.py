@@ -85,7 +85,7 @@ def calculate_metrics(
     route_correct = direct_total = unnecessary = retrieval_total = missed = 0
     memory_expected = memory_hits = proposed = accepted = 0
     cross_session = []
-    supported = claim_total = 0
+    supported = claim_total = unverified_claims = 0
     used_total = invalid_total = cited_gold_total = gold_source_total = 0
     tokens = cost = latency = error_rows = recovered = 0
 
@@ -131,8 +131,16 @@ def calculate_metrics(
 
         if row.get("evidence"):
             claims = row.get("claims", [])
-            claim_total += len(claims)
-            supported += sum(claim.get("status") == "supported" for claim in claims)
+            verifiable_claims = [
+                claim
+                for claim in claims
+                if not str(claim.get("note", "")).startswith("UNVERIFIED:")
+            ]
+            unverified_claims += len(claims) - len(verifiable_claims)
+            claim_total += len(verifiable_claims)
+            supported += sum(
+                claim.get("status") == "supported" for claim in verifiable_claims
+            )
 
         used, invalid = _citation_audit(row)
         used_total += len(used)
@@ -189,6 +197,7 @@ def calculate_metrics(
             "counts": {
                 "supported_claims": supported,
                 "claims": claim_total,
+                "unverified_claims": unverified_claims,
                 "used_citations": used_total,
                 "invalid_citations": invalid_total,
                 "cited_gold_sources": cited_gold_total,

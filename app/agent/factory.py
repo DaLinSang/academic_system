@@ -88,7 +88,7 @@ def build_stage1_orchestrator(
         Retriever         app/retrieval/                   HybridRetriever（B）
         MemoryStore       app/memory/postgres_store.py    PostgresMemoryStore（B）
         MemoryManager     app/memory/manager.py           LLMMemoryManager（A，默认）
-        Verifier          app/verification/                LexicalVerifier（C）
+        Verifier          app/verification/                SemanticVerifier（C）
         AnswerGenerator   app/agent/answer_generator.py   LLMAnswerGenerator
         LLM               app/llm/client.py               get_llm()
 
@@ -112,7 +112,7 @@ def build_stage1_orchestrator(
     from app.planning.planner import LLMPlanner
     from app.retrieval import HybridRetriever
     from app.routing.router import LLMRouter
-    from app.verification import LexicalVerifier
+    from app.verification import LexicalVerifier, SemanticVerifier
 
     llm = get_llm()
 
@@ -129,7 +129,7 @@ def build_stage1_orchestrator(
         retriever=HybridRetriever(),
         memory_store=PostgresMemoryStore(),
         memory_manager=memory_manager,
-        verifier=LexicalVerifier(),
+        verifier=SemanticVerifier(llm, fallback=LexicalVerifier()),
         answer_generator=LLMAnswerGenerator(llm),
         llm=llm,
         top_k=top_k,

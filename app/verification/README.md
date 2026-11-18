@@ -11,7 +11,7 @@
 
 ## 3. 对外公共接口
 
-LexicalVerifier 实现冻结的 Verifier Protocol：
+SemanticVerifier 与 LexicalVerifier 都实现冻结的 Verifier Protocol：
 
     def verify(self, answer: str, evidence: list[Evidence]) -> list[ClaimCheck]
 
@@ -26,18 +26,19 @@ LexicalVerifier 实现冻结的 Verifier Protocol：
 
 ## 6. 依赖的其他模块
 
-只依赖 app.core.types 与冻结的 app.core.interfaces.Verifier 契约，不依赖数据库、LLM、Retriever 内部实现或 API key。
+SemanticVerifier 只通过 A 提供的统一 LLM Protocol 调用模型，不直接访问供应商 SDK、数据库或 Retriever。LexicalVerifier 不需要模型，保留为可复现规则基线和语义校验失败时的降级路径。
 
 ## 7. 安装或配置要求
 
-没有新增依赖或环境变量。阶段 0 Mock 环境即可运行。
+没有新增第三方依赖。Real 模式需要项目已有的 HKU 或 DeepSeek 模型配置；没有可用模型时自动降级到 LexicalVerifier。
 
 ## 8. 最小运行示例
 
     from app.core.types import Evidence
-    from app.verification import LexicalVerifier
+    from app.verification import SemanticVerifier
+    from app.llm.client import get_llm
 
-    verifier = LexicalVerifier()
+    verifier = SemanticVerifier(get_llm())
     checks = verifier.verify(answer, evidence)
 
 ## 9. 测试命令
@@ -48,7 +49,7 @@ LexicalVerifier 实现冻结的 Verifier Protocol：
 
 ## 10. 正常输出示例
 
-ClaimCheck 包含 claim、status、confidence、supporting_evidence 和 note。无证据时返回 unsupported，不抛异常。
+ClaimCheck 包含 claim、status、confidence、supporting_evidence 和 note。Real 链路没有 Evidence 时由 Orchestrator 跳过校验；Verifier 被单独调用且无 Evidence 时返回带 UNVERIFIED note 的降级结果。
 
 ## 11. 常见错误及处理方法
 
@@ -56,18 +57,21 @@ ClaimCheck 包含 claim、status、confidence、supporting_evidence 和 note。�
 |---|---|---|
 | supporting_evidence 无法定位 | 使用了文件名而不是 chunk_id | 只返回输入 Evidence.chunk_id |
 | unsupported 比例异常高 | 把引导语、结语或纯引用当成 claim | 检查 split_claims 的元语句过滤 |
-| 深度改写被误判 | V1 是词汇覆盖率 baseline | 后续保持接口不变，替换为 NLI 或 LLM verifier |
+| 中英文语义一致但词面无重叠 | 使用了 LexicalVerifier | Real 模式使用 SemanticVerifier；词法版本仅作 baseline/fallback |
+| 引用编号存在但内容不支持 | 把引用存在误当成支持 | SemanticVerifier 只检查该 claim 实际引用的 Evidence 内容 |
+| 无 Evidence 的 direct 回答显示错误 | 把未校验当 unsupported | Orchestrator 跳过校验，UI 显示“基于模型通用知识” |
 
 ## 12. 当前限制
 
-V1 是确定性词汇覆盖率方法，不能可靠识别否定、数字冲突、深度改写或多步证据。中文使用相邻双字 token，英文过滤常见功能词。
+SemanticVerifier 的判断质量取决于所配置模型，不能把 confidence 当作事实正确概率。UI 将其明确展示为“校验判断置信度”。无法可靠判断时使用 UNVERIFIED note，并从 RQ3 claim support rate 分母排除。LexicalVerifier 的数值只是词面支持得分。
 
 ## 13. 最近一次验收状态
 
-- 日期：2026-11-06
+- 日期：2026-11-17
 - 验收人：Member C 本地自动测试
 - Verifier 固定测试集与单元测试：通过
 - 完整仓库测试：通过
 - Ruff 静态检查：通过
+- 跨语言支持、部分支持、错误引用、矛盾 Evidence、无 Evidence 路径测试：通过
 - Mock Orchestrator B4 注入测试：通过
-- 结论：本地开发完成，等待组员 review 后再推送并创建 PR
+- 结论：Issue #30 的代码与测试修复完成，等待团队 review
