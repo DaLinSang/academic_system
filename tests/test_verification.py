@@ -18,7 +18,12 @@ from app.core.types import (
     RouteType,
     Usage,
 )
-from app.verification import LexicalVerifier, SemanticVerifier, split_claims
+from app.verification import (
+    LexicalVerifier,
+    SemanticVerifier,
+    is_insufficient_answer,
+    split_claims,
+)
 
 _CASES = json.loads(
     (Path(__file__).parent / "fixtures" / "claim_verification_cases.json").read_text(
@@ -90,6 +95,25 @@ def test_split_claims_filters_meta_and_pure_citations() -> None:
         "以上结论均可核对。"
     )
     assert split_claims(answer) == ["RAG 使用外部文档索引 [1]（mock.pdf 第 2 页）"]
+
+
+def test_split_claims_preserves_semicolon_context_for_t06() -> None:
+    answer = (
+        "RAG 在事实性方面优于 BART；在不同任务上的比较分别为 "
+        "42.7%、7.1% 和 17%。[1]"
+    )
+
+    assert split_claims(answer) == [
+        "RAG 在事实性方面优于 BART；在不同任务上的比较分别为 "
+        "42.7%、7.1% 和 17% [1]"
+    ]
+
+
+def test_split_claims_excludes_insufficient_evidence_statement_for_t07() -> None:
+    answer = "现有资料不足以回答 HKU 2026 年 QS 排名。"
+
+    assert is_insufficient_answer(answer) is True
+    assert split_claims(answer) == []
 
 
 @pytest.mark.parametrize("case", _CASES, ids=[case["case_id"] for case in _CASES])

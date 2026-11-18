@@ -11,7 +11,13 @@ from app.core.types import (
     RouteDecision,
     RouteType,
 )
-from app.ui import claim_presentations, pdf_page_count, safe_pdf_name, verification_notice
+from app.ui import (
+    claim_presentations,
+    pdf_page_count,
+    safe_pdf_name,
+    used_citations,
+    verification_notice,
+)
 
 
 def test_safe_pdf_name_removes_paths_and_unsafe_characters() -> None:
@@ -129,3 +135,83 @@ def test_retrieval_without_evidence_has_missing_evidence_notice() -> None:
         "warning",
         "本轮执行了文档检索，但没有找到可用于校验的相关证据。",
     )
+
+
+def test_t07_insufficient_answer_hides_unrelated_candidate_citations() -> None:
+    state = AgentState(question="HKU 2026 QS?", enable_verification=True)
+    state.route = RouteDecision(
+        route=RouteType.DOCUMENT_RETRIEVAL, need_retrieval=True
+    )
+    state.evidence = [
+        Evidence(
+            chunk_id="rag:p2:c0",
+            document_id="rag",
+            file_name="rag_paper.pdf",
+            page_number=2,
+            text="RAG model architecture.",
+            score=0.01,
+        )
+    ]
+    state.build_citations()
+    state.final_answer = "现有资料不足以回答 HKU 2026 年 QS 排名。"
+
+    assert used_citations(state) == []
+    assert verification_notice(state) == (
+        "warning",
+        "在已上传材料中未找到支持本问题的文档证据。",
+    )
+
+
+def test_normal_answer_displays_only_explicitly_used_citations() -> None:
+    state = AgentState(question="Explain RAG")
+    state.evidence = [
+        Evidence(
+            chunk_id="rag:p2:c0",
+            document_id="rag",
+            file_name="rag_paper.pdf",
+            page_number=2,
+            text="Retriever details.",
+            score=1.0,
+        ),
+        Evidence(
+            chunk_id="rag:p3:c0",
+            document_id="rag",
+            file_name="rag_paper.pdf",
+            page_number=3,
+            text="Generator details.",
+            score=0.9,
+        ),
+    ]
+    state.build_citations()
+    state.final_answer = "Generator details are described here [2]."
+
+    assert used_citations(state) == [
+        {
+            "index": 2,
+            "file_name": "rag_paper.pdf",
+            "page_number": 3,
+            "quote": "Generator details.",
+        }
+    ]
+
+
+def test_verification_warning_does_not_hide_valid_draft_citations() -> None:
+    state = AgentState(question="Explain RAG")
+    state.evidence = [
+        Evidence(
+            chunk_id="rag:p2:c0",
+            document_id="rag",
+            file_name="rag_paper.pdf",
+            page_number=2,
+            text="Retriever details.",
+            score=1.0,
+        )
+    ]
+    state.build_citations()
+    state.draft_answer = "RAG uses a retriever [1]."
+    state.final_answer = (
+        state.draft_answer
+        + "\n\nℹ️ 以下内容现有证据不足，校验器未能可靠确认。"
+    )
+
+    assert [item["index"] for item in used_citations(state)] == [1]

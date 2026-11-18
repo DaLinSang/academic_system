@@ -15,6 +15,7 @@ from app.ui.presenters import (
     claim_presentations,
     pdf_page_count,
     safe_pdf_name,
+    used_citations,
     verification_notice,
 )
 
@@ -58,14 +59,16 @@ def _render_claims(state: AgentState) -> None:
 
 def _render_state(state: AgentState) -> None:
     st.markdown(state.final_answer)
-    if state.citations:
+    citations = used_citations(state)
+    if citations:
         with st.expander("页码引用", expanded=True):
-            for citation in state.citations:
+            for citation in citations:
                 st.markdown(
-                    f"**[{citation.index}] {citation.file_name} 第 {citation.page_number} 页**"
+                    f"**[{citation['index']}] {citation['file_name']} "
+                    f"第 {citation['page_number']} 页**"
                 )
-                if citation.quote:
-                    st.caption(citation.quote)
+                if citation["quote"]:
+                    st.caption(citation["quote"])
     with st.expander("Claim Verification", expanded=True):
         _render_claims(state)
     with st.expander("运行信息"):

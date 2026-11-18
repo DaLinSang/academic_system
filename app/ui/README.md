@@ -22,6 +22,8 @@ uv run streamlit run streamlit_app.py
 - PDF 上传；Real 模式通过 Retriever 接口建立索引
 - 多轮聊天与清空当前会话
 - 页码引用和证据原文展示
+- 只展示回答正文实际使用的引用编号，不把全部 Top-K 候选伪装成引用
+- “资料不足”拒答不展示无关候选页码，并单独提示未找到支持本问题的证据
 - Claim 的绿色、黄色、红色状态展示
 - Claim 置信度及对应文件、页码展示
 - 记忆查看、编辑和删除；数据库不可用时友好降级
@@ -36,4 +38,4 @@ uv run ruff check app/ui streamlit_app.py tests/test_ui.py
 ```
 
 `app/ui/presenters.py` 保持为纯展示转换层，因此不启动浏览器也能测试 claim
-颜色映射、真实 evidence 页码解析和上传文件名安全处理。
+颜色映射、真实 evidence 页码解析、实际引用过滤、资料不足呈现和上传文件名安全处理。

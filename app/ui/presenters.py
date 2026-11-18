@@ -13,8 +13,10 @@ from typing import Any
 from pypdf import PdfReader
 
 from app.core.types import AgentState, ClaimStatus
+from app.verification import is_insufficient_answer
 
 _UNSAFE_FILENAME = re.compile(r"[^A-Za-z0-9._\-\u4e00-\u9fff]+")
+_CITATION_INDEX = re.compile(r"\[(\d+)\]")
 
 _STATUS_VIEW = {
     ClaimStatus.SUPPORTED: ("supported", "success", "有证据支持"),
@@ -27,11 +29,37 @@ def verification_notice(state: AgentState) -> tuple[str, str] | None:
     """Explain why no claim result exists without implying factual error."""
     if state.claims or not state.enable_verification:
         return None
+    answer = state.draft_answer or state.final_answer
+    if is_insufficient_answer(answer):
+        return ("warning", "在已上传材料中未找到支持本问题的文档证据。")
     if state.evidence:
         return ("info", "本次回答没有可独立校验的事实陈述。")
     if state.route and state.route.is_direct:
         return ("info", "本轮未进行文档证据校验；回答基于模型通用知识。")
     return ("warning", "本轮执行了文档检索，但没有找到可用于校验的相关证据。")
+
+
+def used_citations(state: AgentState) -> list[dict[str, Any]]:
+    """Return only citations explicitly used by a non-refusal answer."""
+    answer = state.draft_answer or state.final_answer
+    if not answer or is_insufficient_answer(answer):
+        return []
+    indices: list[int] = []
+    for raw in _CITATION_INDEX.findall(answer):
+        index = int(raw)
+        if index not in indices:
+            indices.append(index)
+    by_index = {citation.index: citation for citation in state.citations}
+    return [
+        {
+            "index": by_index[index].index,
+            "file_name": by_index[index].file_name,
+            "page_number": by_index[index].page_number,
+            "quote": by_index[index].quote,
+        }
+        for index in indices
+        if index in by_index
+    ]
 
 
 def safe_pdf_name(filename: str) -> str:
