@@ -514,6 +514,19 @@ class Orchestrator:
         if isinstance(usage, Usage):
             state.usage = state.usage.add(usage)
 
+        # Issue #48：重试本身已有（LLM 客户端的指数退避），但此前对 trace 不可见。
+        # 记录次数与额外耗时，RQ4 才能区分"一次成功"和"失败两次后成功"。
+        retries = getattr(component, "last_retries", 0)
+        if retries:
+            state.log(
+                "llm",
+                "retry",
+                retries=retries,
+                retry_latency_ms=round(
+                    float(getattr(component, "last_retry_latency_ms", 0.0)), 2
+                ),
+            )
+
     # ------------------------------------------------------------------ #
     # 最终答案组装
     # ------------------------------------------------------------------ #
