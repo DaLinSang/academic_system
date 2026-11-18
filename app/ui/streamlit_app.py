@@ -13,8 +13,10 @@ from app.core.config import settings
 from app.core.types import AgentState
 from app.ui.presenters import (
     claim_presentations,
+    memory_write_summary,
     pdf_page_count,
     safe_pdf_name,
+    used_citations,
     verification_notice,
 )
 
@@ -58,19 +60,24 @@ def _render_claims(state: AgentState) -> None:
 
 def _render_state(state: AgentState) -> None:
     st.markdown(state.final_answer)
-    if state.citations:
+    citations = used_citations(state)
+    if citations:
         with st.expander("页码引用", expanded=True):
-            for citation in state.citations:
+            for citation in citations:
                 st.markdown(
-                    f"**[{citation.index}] {citation.file_name} 第 {citation.page_number} 页**"
+                    f"**[{citation['index']}] {citation['file_name']} "
+                    f"第 {citation['page_number']} 页**"
                 )
-                if citation.quote:
-                    st.caption(citation.quote)
+                if citation["quote"]:
+                    st.caption(citation["quote"])
     with st.expander("Claim Verification", expanded=True):
         _render_claims(state)
     with st.expander("运行信息"):
         if state.route:
             st.write("Router:", state.route.route.value, "-", state.route.reason)
+        st.caption(f"用户：{state.user_id} · 会话：{state.session_id} · 轮次：{state.turn_index}")
+        memory_level, memory_message = memory_write_summary(state)
+        getattr(st, memory_level)(memory_message)
         st.write(
             {
                 "tokens": state.usage.total_tokens,
@@ -163,8 +170,13 @@ def main() -> None:
         st.session_state.evaluation_mode = "B4"
         _sync_mode_flags()
 
+    user_id = settings.runtime.default_user_id
+    session_id = "streamlit"
+
     with st.sidebar:
         st.header("运行设置")
+        st.caption(f"用户：{user_id}")
+        st.caption(f"工作区：共享文档库 · 会话：{session_id}")
         runtime = st.radio("运行链路", ["Mock", "Real"], horizontal=True)
         mode = st.selectbox(
             "评测模式",
@@ -184,7 +196,6 @@ def main() -> None:
             st.rerun()
 
     orch = _get_orchestrator(runtime, top_k)
-    user_id = settings.runtime.default_user_id
     st.session_state.setdefault("history", [])
 
     chat_col, info_col = st.columns([2, 1])
@@ -205,7 +216,7 @@ def main() -> None:
                 with st.spinner("Agent 正在处理..."):
                     state = orch.run(
                         question,
-                        session_id="streamlit",
+                        session_id=session_id,
                         user_id=user_id,
                         turn_index=len(st.session_state.history),
                         **flags,

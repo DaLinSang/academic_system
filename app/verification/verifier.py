@@ -15,13 +15,27 @@ from typing import Any
 from app.core.interfaces import LLM
 from app.core.types import ClaimCheck, ClaimStatus, Evidence, Usage
 
-_SENTENCE_SPLIT = re.compile(r"[。！？!?；;\n]+|(?<=[.])\s+(?=[A-Z0-9])")
+_SENTENCE_SPLIT = re.compile(r"[。！？!?\n]+|(?<=[.])\s+(?=[A-Z0-9])")
 _CITATION = re.compile(r"\[(\d+)\]")
 _PAGE_LOCATOR = re.compile(r"[（(][^）)]*第\s*\d+\s*页[^）)]*[）)]")
 _LIST_PREFIX = re.compile(r"^(?:[-•*·]+|\d+[.)、])\s*")
 _META = re.compile(
     r"^(?:根据|依据|以上|综上|总之|下面|如下|参考|注[:：]|说明[:：]|"
     r"in summary|according to|based on|the following)",
+    re.IGNORECASE,
+)
+_INSUFFICIENT_CLAIM = re.compile(
+    r"^(?:(?:由于|因为)\s*)?"
+    r"(?:(?:现有|当前|已上传|所提供|检索到的)\s*)?"
+    r"(?:资料|材料|文档|证据|信息).{0,20}"
+    r"(?:不足以|不足.{0,8}无法|未包含|没有提到|无法支持|不能支持|无法回答)"
+    r"|^(?:我|系统)?\s*(?:无法|不能).{0,20}(?:回答|确定|核实)"
+    r"|^(?:未|没有)(?:在.{0,20})?找到.{0,20}(?:相关|支持).{0,20}"
+    r"(?:证据|内容|信息)"
+    r"|^(?:the\s+)?(?:available|provided|retrieved)?\s*"
+    r"(?:evidence|documents?|information).{0,30}"
+    r"(?:is insufficient|does not contain|cannot support)"
+    r"|^(?:i\s+)?cannot.{0,20}(?:answer|determine|verify)",
     re.IGNORECASE,
 )
 _ENGLISH_STOPWORDS = {
@@ -35,6 +49,16 @@ def _substantive_text(text: str) -> str:
     text = _CITATION.sub("", text)
     text = _PAGE_LOCATOR.sub("", text)
     return re.sub(r"\s+", " ", text).strip(" -•*·\t")
+
+
+def is_insufficient_claim(text: str) -> bool:
+    """Return True for refusal/absence statements, not factual document claims."""
+    return bool(_INSUFFICIENT_CLAIM.search(_substantive_text(text)))
+
+
+def is_insufficient_answer(answer: str) -> bool:
+    """Detect answers whose main result is that uploaded evidence is insufficient."""
+    return any(is_insufficient_claim(part) for part in _SENTENCE_SPLIT.split(answer))
 
 
 def split_claims(answer: str, *, min_length: int = 8) -> list[str]:
@@ -53,6 +77,8 @@ def split_claims(answer: str, *, min_length: int = 8) -> list[str]:
         if not substantive or len(substantive) < min_length:
             continue
         if _META.match(substantive):
+            continue
+        if is_insufficient_claim(substantive):
             continue
         claims.append(candidate)
     return claims

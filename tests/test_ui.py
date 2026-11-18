@@ -11,7 +11,14 @@ from app.core.types import (
     RouteDecision,
     RouteType,
 )
-from app.ui import claim_presentations, pdf_page_count, safe_pdf_name, verification_notice
+from app.ui import (
+    claim_presentations,
+    memory_write_summary,
+    pdf_page_count,
+    safe_pdf_name,
+    used_citations,
+    verification_notice,
+)
 
 
 def test_safe_pdf_name_removes_paths_and_unsafe_characters() -> None:
@@ -128,4 +135,140 @@ def test_retrieval_without_evidence_has_missing_evidence_notice() -> None:
     assert verification_notice(state) == (
         "warning",
         "本轮执行了文档检索，但没有找到可用于校验的相关证据。",
+    )
+
+
+def test_t07_insufficient_answer_hides_unrelated_candidate_citations() -> None:
+    state = AgentState(question="HKU 2026 QS?", enable_verification=True)
+    state.route = RouteDecision(
+        route=RouteType.DOCUMENT_RETRIEVAL, need_retrieval=True
+    )
+    state.evidence = [
+        Evidence(
+            chunk_id="rag:p2:c0",
+            document_id="rag",
+            file_name="rag_paper.pdf",
+            page_number=2,
+            text="RAG model architecture.",
+            score=0.01,
+        )
+    ]
+    state.build_citations()
+    state.final_answer = "现有资料不足以回答 HKU 2026 年 QS 排名。"
+
+    assert used_citations(state) == []
+    assert verification_notice(state) == (
+        "warning",
+        "在已上传材料中未找到支持本问题的文档证据。",
+    )
+
+
+def test_normal_answer_displays_only_explicitly_used_citations() -> None:
+    state = AgentState(question="Explain RAG")
+    state.evidence = [
+        Evidence(
+            chunk_id="rag:p2:c0",
+            document_id="rag",
+            file_name="rag_paper.pdf",
+            page_number=2,
+            text="Retriever details.",
+            score=1.0,
+        ),
+        Evidence(
+            chunk_id="rag:p3:c0",
+            document_id="rag",
+            file_name="rag_paper.pdf",
+            page_number=3,
+            text="Generator details.",
+            score=0.9,
+        ),
+    ]
+    state.build_citations()
+    state.final_answer = "Generator details are described here [2]."
+
+    assert used_citations(state) == [
+        {
+            "index": 2,
+            "file_name": "rag_paper.pdf",
+            "page_number": 3,
+            "quote": "Generator details.",
+        }
+    ]
+
+
+def test_verification_warning_does_not_hide_valid_draft_citations() -> None:
+    state = AgentState(question="Explain RAG")
+    state.evidence = [
+        Evidence(
+            chunk_id="rag:p2:c0",
+            document_id="rag",
+            file_name="rag_paper.pdf",
+            page_number=2,
+            text="Retriever details.",
+            score=1.0,
+        )
+    ]
+    state.build_citations()
+    state.draft_answer = "RAG uses a retriever [1]."
+    state.final_answer = (
+        state.draft_answer
+        + "\n\nℹ️ 以下内容现有证据不足，校验器未能可靠确认。"
+    )
+
+    assert [item["index"] for item in used_citations(state)] == [1]
+
+
+def test_memory_summary_distinguishes_no_signal_from_failure() -> None:
+    state = AgentState(question="Explain RAG", enable_memory=True)
+    state.log(
+        "memory_write",
+        "stats",
+        skipped="no_signal",
+        proposed=0,
+        accepted=0,
+    )
+
+    assert memory_write_summary(state) == (
+        "info",
+        "本轮没有检测到需要长期保存的稳定信息。",
+    )
+
+    failed = AgentState(question="Remember this", enable_memory=True)
+    failed.log("memory_write", "error", error="database unavailable")
+    assert memory_write_summary(failed) == (
+        "error",
+        "长期记忆写入失败：database unavailable",
+    )
+
+
+def test_memory_summary_reports_confirmed_store_and_filtered_candidates() -> None:
+    stored = AgentState(question="Remember my preference", enable_memory=True)
+    stored.log(
+        "memory_write",
+        "stats",
+        skipped=None,
+        proposed=1,
+        accepted=1,
+    )
+    stored.log("memory_write", "end", stored=1)
+    assert memory_write_summary(stored) == (
+        "success",
+        "本轮已保存 1 条长期记忆。",
+    )
+
+    filtered = AgentState(question="Remember duplicate", enable_memory=True)
+    filtered.log(
+        "memory_write",
+        "stats",
+        skipped=None,
+        proposed=1,
+        accepted=0,
+        dropped_duplicate=1,
+        dropped_sensitive=0,
+        dropped_invalid=0,
+    )
+    filtered.log("memory_write", "end", stored=0)
+    assert memory_write_summary(filtered) == (
+        "info",
+        "模型建议 1 条记忆，但未保存：重复 1 条。",
     )
