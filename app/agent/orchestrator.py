@@ -141,6 +141,7 @@ class Orchestrator:
             enable_verification=enable_verification,
         )
         t_total = time.perf_counter()
+        replan_budget = self.max_replans  # 每次 run 独立预算，绝不改实例配置
         state.log("pipeline", "start", question=question)
 
         # 1) 记忆读取
@@ -179,10 +180,17 @@ class Orchestrator:
             self._run_verification(state)
 
             # 6.5) 校验发现问题后的重规划（Issue #47）。
-            # 只做一轮，且只在本来就有计划的复杂任务上做——避免把成本失控的
-            # "反复修复过程"混进 RQ4 的正常回答统计。
-            if self.enable_replan and state.unsupported_claims and route.need_planning:
-                self._maybe_replan(state, route)
+            # 预算是"每次 run"的局部变量，不是实例字段——Streamlit 会缓存并复用
+            # 同一个 Orchestrator，改实例字段会让第一个请求之后永久失去重规划能力。
+            if (
+                self.enable_replan
+                and state.unsupported_claims
+                and route.need_planning
+            ):
+                if replan_budget > 0:
+                    replan_budget = self._maybe_replan(state, route, replan_budget)
+                else:
+                    state.log("replan", "skip", reason="budget_exhausted")
 
         # 7) 组装最终答案
         state.final_answer = self._compose_final(state)
@@ -381,21 +389,36 @@ class Orchestrator:
                 state.errors.append(f"verifier: {type(exc).__name__}: {exc}")
                 state.log("verify", "error", error=str(exc))
 
-    def _maybe_replan(self, state: AgentState, route: RouteDecision) -> None:
-        """校验发现 unsupported claim 后，再规划一轮补充检索。
+    def _maybe_replan(
+        self, state: AgentState, route: RouteDecision, budget: int
+    ) -> int:
+        """校验发现可判定的 unsupported claim 后再规划一轮，返回剩余预算。
 
         不给 `Planner.plan()` 加参数（那是公共契约）：把失败信息拼进 question
         字符串，Mock 与真实 Planner 都能直接吃。
 
-        预算硬上限 1 次重规划。理由：
-          - 成本：每轮 Planner + Retriever + Generator 至少 2 次模型调用；
-          - 统计：修复过程如果反复进行，RQ4 的 token/latency 就不再是"一次回答"的成本。
+        C review #52：SemanticVerifier 在无法判断时会输出
+        `status=UNSUPPORTED + note="UNVERIFIED: ..."`，这不是"事实被否定"，
+        不能因此触发额外规划/检索/生成，否则 RQ3/RQ4 会被污染。
         """
-        if self.max_replans < 1:
+        if budget < 1:
             state.log("replan", "skip", reason="budget_exhausted")
-            return
+            return budget
 
-        unsupported = [c.claim for c in state.unsupported_claims][:3]
+        # 只把"能判定为无支撑"的 claim 作为重规划输入
+        determinable = [
+            c for c in state.unsupported_claims
+            if not (c.note or "").startswith("UNVERIFIED:")
+        ]
+        if not determinable:
+            state.log(
+                "replan",
+                "skip",
+                reason="unverified_only" if state.unsupported_claims else "no_unsupported",
+            )
+            return budget
+
+        unsupported = [c.claim for c in determinable][:3]
         retry_question = (
             f"{state.question}\n\n"
             f"上一轮回答中以下内容缺少证据，请规划补充检索：{'；'.join(unsupported)}"
@@ -403,19 +426,19 @@ class Orchestrator:
 
         with self._stage(state, "replan") as ok:
             if not ok:
-                return
+                return budget
             try:
                 new_plan = self.planner.plan(retry_question, route, state.memory_context)
             except Exception as exc:  # noqa: BLE001 - 重规划失败不能毁掉已有回答
                 state.errors.append(f"replan: {type(exc).__name__}: {exc}")
                 state.log("replan", "error", error=str(exc))
-                return
+                return budget
 
             self._absorb_usage(state, self.planner)
             state.log(
                 "replan",
                 "start",
-                unsupported=len(state.unsupported_claims),
+                unsupported=len(determinable),
                 steps=len(new_plan),
             )
 
@@ -431,13 +454,14 @@ class Orchestrator:
             if state.evidence:
                 self._run_verification(state)
 
-            self.max_replans -= 1
+            budget -= 1
             state.log(
                 "replan",
                 "end",
                 evidence=len(state.evidence),
-                remaining_unsupported=len(state.unsupported_claims),
+                remaining_unsupported=len([c for c in state.unsupported_claims if not (c.note or "").startswith("UNVERIFIED:")]),
             )
+            return budget
 
     def _run_retrieval_with_plan(self, state: AgentState, plan: list) -> None:
         """用给定计划执行检索；复用主路径的逻辑但临时替换 plan。"""

@@ -101,12 +101,19 @@ def test_replan_uses_new_plan_queries():
     assert "ReAct" in queries, "重规划的新查询应该真的执行了"
 
 
-def test_replan_budget_is_consumed():
-    orch = build(FlakyVerifier(), CountingPlanner())
-    state = orch.run(COMPLEX, enable_memory=False)
+def test_replan_budget_is_per_run_not_instance_global():
+    """C review #52：同一个 orchestrator 连续两轮都应各触发一次重规划。"""
+    # 用"永远 unsupported"的校验器，确保两轮都有触发条件；
+    # FlakyVerifier 的计数器跨轮共享，第二轮会变成 supported，测不出预算问题。
+    orch = build(AlwaysUnsupportedVerifier(), CountingPlanner())
 
-    assert orch.max_replans == 0
-    assert _events(state, "replan", "end")[0].detail["remaining_unsupported"] == 0
+    first = orch.run(COMPLEX, enable_memory=False)
+    second = orch.run(COMPLEX, enable_memory=False)
+
+    assert orch.max_replans == 1, "配置字段不能被运行消耗"
+    assert _events(first, "replan", "end")
+    assert _events(second, "replan", "end")
+    assert len(_events(second, "replan", "end")) == 1, "每轮最多一次"
 
 
 def test_unsupported_claims_resolve_after_replan():
@@ -192,3 +199,48 @@ def test_planner_failure_does_not_break_answer():
 def test_replan_events_are_json_serializable():
     state = build(FlakyVerifier(), CountingPlanner()).run(COMPLEX, enable_memory=False)
     assert state.model_dump_json()
+
+
+# --------------------------------------------------------------------------- #
+# C review #52：UNVERIFIED 不等于事实被否定
+# --------------------------------------------------------------------------- #
+class UnverifiedVerifier:
+    """SemanticVerifier 无法判断时的输出形态。"""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def verify(self, answer, evidence):
+        self.calls += 1
+        return [
+            ClaimCheck(
+                claim="模型无法确认这条",
+                status=ClaimStatus.UNSUPPORTED,
+                note="UNVERIFIED: verifier cannot determine",
+            )
+        ]
+
+
+def test_unverified_claim_does_not_trigger_replan():
+    verifier, planner = UnverifiedVerifier(), CountingPlanner()
+    state = build(verifier, planner).run(COMPLEX, enable_memory=False)
+
+    assert planner.calls == 1
+    assert verifier.calls == 1
+    assert not _events(state, "replan", "start")
+    skips = _events(state, "replan", "skip")
+    assert skips and skips[0].detail["reason"] == "unverified_only"
+
+
+def test_insufficient_evidence_empty_claims_does_not_trigger_replan():
+    """'资料不足'经 split_claims 后 claims 为空，不应误触发重规划。"""
+
+    class EmptyVerifier:
+        def verify(self, answer, evidence):
+            return []
+
+    planner = CountingPlanner()
+    state = build(EmptyVerifier(), planner).run(COMPLEX, enable_memory=False)
+
+    assert state.claims == []
+    assert not _events(state, "replan", "start")
