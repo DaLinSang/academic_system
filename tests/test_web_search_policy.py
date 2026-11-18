@@ -136,8 +136,11 @@ def test_concept_questions_do_not_trigger_search(policy, question):
     assert d.trigger == "none"
 
 
-def test_low_quality_evidence_triggers_search(policy):
+def test_low_quality_evidence_triggers_search_when_threshold_opted_in():
+    # C review 后默认阈值改为 0（禁用）；要测低分触发必须显式开启
+    policy = WebSearchPolicy(min_evidence_score=0.5)
     d = policy.decide("最新版本是什么？", evidence=evidence(0.001))
+
     assert d.should_search is True
     assert d.trigger == "low_evidence_quality"
     assert "0.001" in d.reason
@@ -180,3 +183,38 @@ def test_invalid_parameters_are_rejected():
         WebSearchPolicy(min_evidence_score=-1)
     with pytest.raises(ValueError):
         WebSearchPolicy(max_query_chars=10)
+
+
+# --------------------------------------------------------------------------- #
+# C review：RRF 真实分数不能被默认阈值误判
+# --------------------------------------------------------------------------- #
+def test_realistic_rrf_rank1_does_not_trigger_low_quality():
+    """HybridRetriever 双路 rank-1 的 RRF 分只有 ~0.0328。
+
+    默认阈值 0.05 会把这种最好结果判成"低质量"，导致带 latest/current 的
+    问题只要检索成功就必然联网。C review 发现后把默认阈值改为 0（禁用）。
+    """
+    rrf_best = 1 / 61 + 1 / 61  # ≈ 0.0328
+    policy = WebSearchPolicy()
+    d = policy.decide("最新版本是什么？", evidence=evidence(rrf_best))
+
+    assert policy.min_evidence_score == 0.0
+    assert d.should_search is False
+    assert d.trigger == "none"
+
+
+def test_rrf_score_still_counts_as_evidence_presence():
+    """分数低但非零仍算"有证据"，不该走 no_local_evidence。"""
+    policy = WebSearchPolicy()
+    d = policy.decide("最新版本是什么？", evidence=evidence(0.001))
+
+    assert d.should_search is False
+    assert d.trigger == "none"
+
+
+def test_score_threshold_is_opt_in_and_still_works():
+    policy = WebSearchPolicy(min_evidence_score=0.5)
+    d = policy.decide("最新版本是什么？", evidence=evidence(0.0328))
+
+    assert d.should_search is True
+    assert d.trigger == "low_evidence_quality"

@@ -59,7 +59,9 @@ class WebSearchPolicy:
     ----
     enabled: 总开关。False 时永远不联网（B1/B2 或实验对照用）。
     allow_mock: Mock 模式是否允许联网。默认 False——离线演示不该产生外网流量。
-    min_evidence_score: 低于这个分数视为"证据质量不足"。
+    min_evidence_score: 低于这个分数视为"证据质量不足"。**0 表示禁用分数阈值**（默认）。
+        RRF 融合分数量级只有 0.03 左右，在 C 用标注集校准之前不能拿绝对阈值判断。
+        只有"有没有证据"是可靠信号。
     """
 
     # 时效性 / 外部事实信号。命中才认为"本地讲义可能答不了"。
@@ -85,7 +87,7 @@ class WebSearchPolicy:
         *,
         enabled: bool = True,
         allow_mock: bool = False,
-        min_evidence_score: float = 0.05,
+        min_evidence_score: float = 0.0,
         max_query_chars: int = 200,
     ) -> None:
         if min_evidence_score < 0:
@@ -156,7 +158,9 @@ class WebSearchPolicy:
 
         # 外部问题 + 证据分过低 → 联网
         best = max((e.score for e in items), default=0.0)
-        if best < self.min_evidence_score:
+        # 分数阈值默认关闭：RRF 分数量级 ~0.03，1/61 + 1/61 ≈ 0.0328 已经是
+        # 双路 rank-1 的最好结果。用绝对阈值会把正常检索全判成低质量。
+        if self.min_evidence_score > 0 and best < self.min_evidence_score:
             return WebSearchDecision(
                 should_search=True, trigger="low_evidence_quality",
                 reason=f"本地证据最高分 {best:.3f} 低于阈值 {self.min_evidence_score:.3f}",
