@@ -301,13 +301,21 @@ class Orchestrator:
             state.current_step = sum(
                 1 for s in state.plan if s.status is not StepStatus.PENDING
             )
+            # B 的 HybridRetriever 在向量检索失败时会降级成 BM25-only，并把原因
+            # 放在 last_warning。这必须进 trace：否则 RRF 轮次和纯 BM25 轮次
+            # 在实验数据里看起来一样，C 算 RQ1/RQ3 时会把两种系统混在一起。
+            warning = getattr(self.retriever, "last_warning", None)
             state.log(
                 "retrieval",
                 "end",
                 evidence=len(state.evidence),
                 queries=len(jobs),
                 tools_recorded=len(state.tool_results),
+                warning=warning,
+                degraded=bool(warning),
             )
+            if warning:
+                state.log("retrieval", "degraded", reason=warning)
 
     def _run_verification(self, state: AgentState) -> None:
         with self._stage(state, "verify") as ok:
