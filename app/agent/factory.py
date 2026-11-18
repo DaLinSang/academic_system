@@ -45,6 +45,8 @@ def build_orchestrator(
     answer_generator: AnswerGenerator,
     llm: LLM,
     top_k: int = 5,
+    enable_replan: bool = True,
+    max_replans: int = 1,
 ) -> Orchestrator:
     return Orchestrator(
         router=router,
@@ -56,6 +58,8 @@ def build_orchestrator(
         answer_generator=answer_generator,
         llm=llm,
         top_k=top_k,
+        enable_replan=enable_replan,
+        max_replans=max_replans,
     )
 
 

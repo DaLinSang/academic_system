@@ -98,6 +98,8 @@ class Orchestrator:
         answer_generator: AnswerGenerator,
         llm: LLM,
         top_k: int = 5,
+        enable_replan: bool = True,
+        max_replans: int = 1,
     ) -> None:
         self.router = router
         self.planner = planner
@@ -108,6 +110,10 @@ class Orchestrator:
         self.answer_generator = answer_generator
         self.llm = llm
         self.top_k = top_k
+        # Issue #47：校验失败后的重规划预算。默认 1 次——再多成本失控，
+        # 而且 RQ4 会把"修复过程"和"正常回答"混在一起统计。
+        self.enable_replan = enable_replan
+        self.max_replans = max(0, min(max_replans, 2))
 
     # ------------------------------------------------------------------ #
     # 主入口
@@ -171,6 +177,12 @@ class Orchestrator:
         # 6) 校验
         if enable_verification:
             self._run_verification(state)
+
+            # 6.5) 校验发现问题后的重规划（Issue #47）。
+            # 只做一轮，且只在本来就有计划的复杂任务上做——避免把成本失控的
+            # "反复修复过程"混进 RQ4 的正常回答统计。
+            if self.enable_replan and state.unsupported_claims and route.need_planning:
+                self._maybe_replan(state, route)
 
         # 7) 组装最终答案
         state.final_answer = self._compose_final(state)
@@ -316,8 +328,15 @@ class Orchestrator:
                     step.status = StepStatus.DONE
                     step.result_summary = f"命中 {len(found)} 个片段"
 
+            # llm 类步骤当前不单独执行，分析统一在 AnswerGenerator 里完成。
+            # 标 SKIPPED 而不是 PENDING —— PENDING 暗示"还没走到"，但它其实
+            # 已经被有意跳过了，如实记录才不会让报告误读。
+            for step in state.plan:
+                if step.tool == "llm" and step.status is StepStatus.PENDING:
+                    step.status = StepStatus.SKIPPED
+                    step.result_summary = "由 AnswerGenerator 统一完成，不作为独立工具执行"
+
             # 已处理（DONE / FAILED / SKIPPED）的步骤数。
-            # llm 类步骤当前不单独执行，保持 PENDING 是如实反映，不要假装完成。
             state.current_step = sum(
                 1 for s in state.plan if s.status is not StepStatus.PENDING
             )
@@ -361,6 +380,74 @@ class Orchestrator:
             except Exception as exc:  # noqa: BLE001
                 state.errors.append(f"verifier: {type(exc).__name__}: {exc}")
                 state.log("verify", "error", error=str(exc))
+
+    def _maybe_replan(self, state: AgentState, route: RouteDecision) -> None:
+        """校验发现 unsupported claim 后，再规划一轮补充检索。
+
+        不给 `Planner.plan()` 加参数（那是公共契约）：把失败信息拼进 question
+        字符串，Mock 与真实 Planner 都能直接吃。
+
+        预算硬上限 1 次重规划。理由：
+          - 成本：每轮 Planner + Retriever + Generator 至少 2 次模型调用；
+          - 统计：修复过程如果反复进行，RQ4 的 token/latency 就不再是"一次回答"的成本。
+        """
+        if self.max_replans < 1:
+            state.log("replan", "skip", reason="budget_exhausted")
+            return
+
+        unsupported = [c.claim for c in state.unsupported_claims][:3]
+        retry_question = (
+            f"{state.question}\n\n"
+            f"上一轮回答中以下内容缺少证据，请规划补充检索：{'；'.join(unsupported)}"
+        )
+
+        with self._stage(state, "replan") as ok:
+            if not ok:
+                return
+            try:
+                new_plan = self.planner.plan(retry_question, route, state.memory_context)
+            except Exception as exc:  # noqa: BLE001 - 重规划失败不能毁掉已有回答
+                state.errors.append(f"replan: {type(exc).__name__}: {exc}")
+                state.log("replan", "error", error=str(exc))
+                return
+
+            self._absorb_usage(state, self.planner)
+            state.log(
+                "replan",
+                "start",
+                unsupported=len(state.unsupported_claims),
+                steps=len(new_plan),
+            )
+
+            # 用新的检索查询补证据；state.add_evidence 按 chunk_id 去重，不会重复
+            self._run_retrieval_with_plan(state, new_plan)
+
+            # 重新生成与校验一次，然后无条件停手
+            with self._stage(state, "generate") as gen_ok:
+                if gen_ok:
+                    state.draft_answer = self.answer_generator.generate(state)
+                    state.build_citations()
+                    state.log("generate", "end", chars=len(state.draft_answer), replan=True)
+            if state.evidence:
+                self._run_verification(state)
+
+            self.max_replans -= 1
+            state.log(
+                "replan",
+                "end",
+                evidence=len(state.evidence),
+                remaining_unsupported=len(state.unsupported_claims),
+            )
+
+    def _run_retrieval_with_plan(self, state: AgentState, plan: list) -> None:
+        """用给定计划执行检索；复用主路径的逻辑但临时替换 plan。"""
+        original = state.plan
+        state.plan = plan
+        try:
+            self._run_retrieval(state)
+        finally:
+            # 保留重规划的步骤供报告查看，但把状态恢复为"本轮最终计划"
+            state.plan = original + [s for s in plan if s not in original]
 
     def _write_memory(self, state: AgentState) -> None:
         """只在 enable_memory 时写入，且只写 MemoryManager 认为值得存的。"""
