@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from app.core.types import (
     AgentState,
     ConversationTurn,
@@ -122,3 +124,70 @@ def test_jsonl_round_trip_with_new_fields():
     restored = AgentState.model_validate_json(line)
     assert restored.history[0].question == "p"
     assert restored.evidence[0].locator == "What is RAG · 网页"
+
+
+# --------------------------------------------------------------------------- #
+# C review #54：Citation 与来源不变量
+# --------------------------------------------------------------------------- #
+def test_web_evidence_builds_citation_without_crash():
+    """端到端：Web Evidence -> build_citations() -> 可点击网页来源。"""
+    state = AgentState(question="q")
+    state.evidence = [web_evidence()]
+
+    citations = state.build_citations()
+
+    assert len(citations) == 1
+    assert citations[0].is_web is True
+    assert citations[0].url == "https://example.com/rag"
+    assert citations[0].locator == "What is RAG · 网页"
+    assert citations[0].page_number == 0, "不能伪造 p.1"
+
+
+def test_document_citation_still_has_page():
+    state = AgentState(question="q")
+    state.evidence = [doc_evidence()]
+    citation = state.build_citations()[0]
+
+    assert citation.is_web is False
+    assert citation.page_number == 9
+    assert citation.locator == "Lec04.pdf p.9"
+
+
+def test_web_evidence_requires_url():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="url"):
+        Evidence(
+            chunk_id="w", document_id="d", file_name="site.test", page_number=0,
+            text="t", score=0.5, retrieval_method=RetrievalMethod.WEB,
+        )
+
+
+def test_document_evidence_rejects_zero_page():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="page_number"):
+        Evidence(
+            chunk_id="c", document_id="d", file_name="f.pdf", page_number=0,
+            text="t", score=0.5, retrieval_method=RetrievalMethod.RRF,
+        )
+
+
+def test_citation_rejects_web_with_fake_page():
+    from pydantic import ValidationError
+
+    from app.core.types import Citation
+
+    with pytest.raises(ValidationError, match="page_number"):
+        Citation(index=1, chunk_id="w", document_id="d", file_name="site.test",
+                 page_number=1, url="https://example.com")
+
+
+def test_citation_rejects_document_without_page():
+    from pydantic import ValidationError
+
+    from app.core.types import Citation
+
+    with pytest.raises(ValidationError, match="page_number"):
+        Citation(index=1, chunk_id="c", document_id="d", file_name="f.pdf",
+                 page_number=0)

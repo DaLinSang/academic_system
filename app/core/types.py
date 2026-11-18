@@ -26,7 +26,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 __all__ = [
     "RouteType",
@@ -197,6 +197,15 @@ class Evidence(_Base):
             return f"{label} · 网页"
         return f"{self.file_name} p.{self.page_number}"
 
+    @model_validator(mode="after")
+    def _check_source_consistency(self) -> Evidence:
+        """C review #54：在模型层守住来源不变量，别等到 UI 才暴露。"""
+        if self.is_web and not self.url:
+            raise ValueError("WEB 证据必须提供 url")
+        if not self.is_web and self.page_number < 1:
+            raise ValueError("文档证据的 page_number 必须 >= 1（1-based）")
+        return self
+
 
 class MemoryItem(_Base):
     """一条已存储的长期记忆。"""
@@ -278,8 +287,29 @@ class Citation(_Base):
     chunk_id: str
     document_id: str
     file_name: str
-    page_number: int = Field(ge=1)
+    page_number: int = Field(ge=0)  # 0 = 网页证据，没有页码
     quote: str = Field(default="", description="被引用的原文片段")
+    url: str | None = Field(default=None, description="网页引用的可点击地址")
+    title: str | None = Field(default=None, description="网页标题")
+
+    @property
+    def is_web(self) -> bool:
+        """与 Evidence 用同一来源判定：有 url 即网页。禁止两套口径。"""
+        return self.url is not None
+
+    @property
+    def locator(self) -> str:
+        if self.is_web:
+            return f"{self.title or self.file_name} · 网页"
+        return f"{self.file_name} p.{self.page_number}"
+
+    @model_validator(mode="after")
+    def _check_source_consistency(self) -> Citation:
+        if self.is_web and self.page_number != 0:
+            raise ValueError("网页引用不能有页码（page_number 必须为 0）")
+        if not self.is_web and self.page_number < 1:
+            raise ValueError("文档引用 page_number 必须 >= 1")
+        return self
 
     @classmethod
     def from_evidence(cls, index: int, ev: Evidence, quote: str = "") -> Citation:
@@ -290,6 +320,8 @@ class Citation(_Base):
             file_name=ev.file_name,
             page_number=ev.page_number,
             quote=quote or ev.text[:200],
+            url=ev.url,
+            title=ev.title,
         )
 
 

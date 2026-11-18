@@ -77,9 +77,9 @@ class Retriever(Protocol):
 | 来源 | `retrieval_method` | 定位字段 | `locator` 示例 |
 |---|---|---|---|
 | 用户文档 | `vector` / `bm25` / `rrf` | `file_name` + `page_number ≥ 1` | `Lec04.pdf p.9` |
-| 网页 | `web` | `url`（必填）+ `title`；`page_number = 0` | `What is RAG · 网页` |
+| 网页 | `web` | `url`（**模型层强制必填**）+ `title`；`page_number = 0` | `What is RAG · 网页` |
 
-`Evidence.is_web` 可直接判断来源；不传新字段时行为与扩展前完全一致。
+`Evidence.is_web` 与 `Citation.is_web` 用同一判定（有 url 即网页），UI / evaluation / Mock 统一采用。`Citation` 也支持 `page_number=0`、带 `url` / `title` / `locator`，网页引用不会被伪造为 p.1。Pydantic 模型层强制不变量：WEB 必须有 url、文档 page_number >= 1、网页 Citation page_number 必须为 0。
 
 **最小可用实现骨架**：
 
