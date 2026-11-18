@@ -43,6 +43,7 @@ __all__ = [
     "ToolResult",
     "Citation",
     "PlanStep",
+    "ConversationTurn",
     "Usage",
     "TraceEvent",
     "LLMResponse",
@@ -107,6 +108,9 @@ class RetrievalMethod(StrEnum):
     RRF = "rrf"
     """混合排序后的结果。"""
 
+    WEB = "web"
+    """网页检索。网页证据没有页码，用 url 定位。"""
+
     MOCK = "mock"
     """阶段 0 的假数据。"""
 
@@ -155,10 +159,14 @@ class Evidence(_Base):
     chunk_id: str
     document_id: str
     file_name: str
-    page_number: int = Field(ge=1)
+    # 网页证据没有页码，允许 0（"无页码"）。文档证据仍应 >= 1。
+    page_number: int = Field(default=1, ge=0)
     text: str
     score: float = Field(description="越大越相关；RRF 分数与余弦分数不可直接比较")
     retrieval_method: RetrievalMethod = RetrievalMethod.MOCK
+    # 网页来源：url 必填，title 可选。文档证据保持 None。
+    url: str | None = Field(default=None, description="网页证据的可访问 URL")
+    title: str | None = Field(default=None, description="网页标题，用于 UI 展示")
 
     @classmethod
     def from_chunk(
@@ -178,8 +186,15 @@ class Evidence(_Base):
         )
 
     @property
+    def is_web(self) -> bool:
+        return self.retrieval_method is RetrievalMethod.WEB
+
+    @property
     def locator(self) -> str:
-        """人类可读的定位串，例如 'Lec04.pdf p.12'。UI 直接用。"""
+        """人类可读的定位串。文档 'Lec04.pdf p.12'，网页用域名/标题。"""
+        if self.is_web:
+            label = self.title or self.file_name
+            return f"{label} · 网页"
         return f"{self.file_name} p.{self.page_number}"
 
 
@@ -343,6 +358,18 @@ class ClaimCheck(_Base):
 
 
 # --------------------------------------------------------------------------- #
+# 多轮对话
+# --------------------------------------------------------------------------- #
+class ConversationTurn(_Base):
+    """历史对话中的一轮。只存问题与最终回答，不存完整 AgentState。"""
+
+    question: str
+    answer: str
+    turn_index: int = Field(ge=0)
+    started_at: datetime = Field(default_factory=utcnow)
+
+
+# --------------------------------------------------------------------------- #
 # 贯穿全流程的状态载体
 # --------------------------------------------------------------------------- #
 class AgentState(_Base):
@@ -365,6 +392,9 @@ class AgentState(_Base):
     session_id: str = "default"
     user_id: str = "default"
     turn_index: int = 0
+    # 上一轮的问答。由调用方传入；为空时行为与此前完全一致（单轮）。
+    # 只放简短历史，完整记录由 SessionStore 负责，不塞进 AgentState。
+    history: list[ConversationTurn] = Field(default_factory=list)
 
     # ---- 消融开关（评测用，UI 侧边栏也直接绑这几个）----
     enable_routing: bool = True
