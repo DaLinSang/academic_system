@@ -104,22 +104,33 @@ class SessionStore:
         path = self._path(uid, sid)
         path.parent.mkdir(parents=True, exist_ok=True)
 
+        # C review #51：UI 的 _render_state / presenters 依赖 evidence、citations、
+        # claims、route、trace 和四个开关。只存 count 会让重启后引用与证据定位
+        # 永久丢失，无法满足 #32 验收第 5/8 点。
+        snapshot = _scrub(json.loads(state.model_dump_json()))
         record = TurnRecord(
             turn_index=state.turn_index,
             question=state.question,
+            draft_answer=state.draft_answer,
             final_answer=state.final_answer,
             started_at=state.started_at.isoformat(),
             saved_at=datetime.now(UTC).isoformat(),
-            route=json.loads(state.route.model_dump_json()) if state.route else None,
+            session_id=state.session_id,
+            user_id=state.user_id,
+            route=snapshot["route"],
+            plan=snapshot["plan"],
+            evidence=snapshot["evidence"],
             evidence_count=len(state.evidence),
+            citations=snapshot["citations"],
             citation_count=len(state.citations),
-            claims=json.loads(
-                json.dumps([c.model_dump(mode="json") for c in state.claims])
-            ),
-            usage=json.loads(state.usage.model_dump_json()),
-            errors=list(state.errors),
-            # 完整 trace 保留，便于报告里复查一轮回答的来源与降级情况
-            trace=_scrub(json.loads(state.model_dump_json())["trace"]),
+            claims=snapshot["claims"],
+            usage=snapshot["usage"],
+            errors=snapshot["errors"],
+            trace=snapshot["trace"],
+            enable_routing=state.enable_routing,
+            enable_retrieval=state.enable_retrieval,
+            enable_memory=state.enable_memory,
+            enable_verification=state.enable_verification,
         )
 
         with path.open("a", encoding="utf-8") as handle:
@@ -137,6 +148,22 @@ class SessionStore:
             for line in path.read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
+
+    # ------------------------------------------------------------------ #
+    def restore(self, user_id: str, session_id: str) -> list[AgentState]:
+        """把历史轮次还原成 AgentState，供 UI 用同一套 presenter 渲染。
+
+        C 的 `_render_state()` 原本就吃 AgentState；有了这个方法，重启后
+        引用、claim 证据定位和来源状态都能按同一口径显示，不需要另写 ViewModel。
+        `saved_at` 是存储元数据，不属于 AgentState，会被剔除。
+        """
+        restored: list[AgentState] = []
+        # 这些是存储层元数据，不属于 AgentState（_Base 禁止额外字段）
+        storage_only = {"saved_at", "evidence_count", "citation_count"}
+        for record in self.load(user_id, session_id):
+            payload = {k: v for k, v in record.items() if k not in storage_only}
+            restored.append(AgentState.model_validate(payload))
+        return restored
 
     # ------------------------------------------------------------------ #
     def list_sessions(self, user_id: str) -> list[SessionSummary]:

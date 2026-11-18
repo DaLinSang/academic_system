@@ -168,3 +168,88 @@ def test_sessions_live_under_own_directory_not_run_id(tmp_path):
     assert path.parent.parent == tmp_path
     assert path.name == "s1.jsonl"
     assert not (tmp_path / "samples.jsonl").exists()
+
+
+# --------------------------------------------------------------------------- #
+# C review #51：重启后仍能呈现引用与 claim 证据定位
+# --------------------------------------------------------------------------- #
+def test_restore_keeps_citations_and_claim_sources(tmp_path):
+    from app.core.types import (
+        Citation,
+        ClaimCheck,
+        ClaimStatus,
+        Evidence,
+        RetrievalMethod,
+    )
+
+    store = SessionStore(tmp_path)
+    state = make_state("讲义里 RAG 是什么？")
+    state.evidence = [
+        Evidence(
+            chunk_id="c42", document_id="d1", file_name="Lec04.pdf",
+            page_number=42, text="RAG 的原文", score=0.9,
+            retrieval_method=RetrievalMethod.RRF,
+        )
+    ]
+    state.citations = [Citation.from_evidence(1, state.evidence[0], quote="RAG 的原文")]
+    state.claims = [
+        ClaimCheck(
+            claim="RAG 结合检索与生成",
+            status=ClaimStatus.SUPPORTED,
+            supporting_evidence=["c42"],
+        )
+    ]
+    store.append(state)
+
+    # 模拟服务重启：新建实例重新读盘
+    reopened = SessionStore(tmp_path)
+    restored = reopened.restore("u1", "s1")
+
+    assert len(restored) == 1
+    row = restored[0]
+    assert row.evidence[0].chunk_id == "c42"
+    assert row.evidence[0].page_number == 42
+    assert row.citations[0].file_name == "Lec04.pdf"
+    assert row.citations[0].page_number == 42
+    assert row.claims[0].supporting_evidence == ["c42"]
+    assert row.final_answer == "回答"
+    assert row.enable_memory is True
+    assert row.enable_verification is True
+
+
+def test_restore_preserves_mode_flags_and_trace(tmp_path):
+    store = SessionStore(tmp_path)
+    state = make_state("问题")
+    state.enable_memory = False
+    state.enable_verification = False
+    state.log("router", "decision", route="direct")
+    store.append(state)
+
+    restored = SessionStore(tmp_path).restore("u1", "s1")[0]
+    assert restored.enable_memory is False
+    assert restored.enable_verification is False
+    assert any(e.stage == "router" for e in restored.trace)
+
+
+def test_load_exposes_full_payload_not_just_counts(tmp_path):
+    from app.core.types import Citation, Evidence, RetrievalMethod
+
+    store = SessionStore(tmp_path)
+    state = make_state("q")
+    state.evidence = [
+        Evidence(chunk_id="c1", document_id="d", file_name="f.pdf",
+                 page_number=1, text="t", score=0.5,
+                 retrieval_method=RetrievalMethod.VECTOR)
+    ]
+    state.citations = [Citation.from_evidence(1, state.evidence[0])]
+    store.append(state)
+
+    raw = store.load("u1", "s1")[0]
+    assert "evidence" in raw and "citations" in raw
+    assert raw["evidence"][0]["file_name"] == "f.pdf"
+    assert raw["citations"][0]["page_number"] == 1
+    assert "draft_answer" in raw
+    assert "enable_memory" in raw
+
+
+# --------------------------------------------------------------------------- #
