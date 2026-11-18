@@ -87,13 +87,17 @@ def test_retry_count_is_exposed():
     assert client.last_retries == 2
 
 
-def test_retry_latency_is_counted_in_usage():
+def test_retry_latency_is_trace_only_not_added_to_usage():
+    """C review #53：pipeline 墙钟已包含退避，usage 再加就会重复计入。
+
+    RQ4 的 latency 单一来源是 Orchestrator 的端到端墙钟。
+    """
     client = make_client(FlakyChat(failures=1))
     response = client.generate([{"role": "user", "content": "hi"}])
 
-    # 至少包含一次 0.5s 退避 = 500ms
-    assert response.usage.latency_ms >= 500
+    # 退避至少 500ms，但 usage.latency_ms 只计本次成功调用
     assert client.last_retry_latency_ms >= 500
+    assert response.usage.latency_ms < 500
 
 
 def test_no_retry_means_zero_overhead():
@@ -141,27 +145,86 @@ class RetryingLLM:
         return LLMResponse(text='{"route":"direct"}', model="fake", usage=self.last_usage)
 
 
-def test_orchestrator_logs_retry_event():
+def test_real_wrapper_router_retry_is_recorded():
+    """C review #53：真实链路里 LLMRouter 持有共享 LLM，计数器在 LLM 上。
+
+    原测试直接把 RetryingLLM 传给私有方法，绕过了包装组件，是假阳性。
+    """
+    from app.routing.router import LLMRouter
+
+    llm = RetryingLLM()
     orch = build_orchestrator(
-        router=RuleBasedRouter(),  # 规则路由不调模型，避免重复计数
+        router=LLMRouter(llm),  # 真实包装组件，持有共享 llm
         planner=MockPlanner(),
         retriever=MockRetriever(),
         memory_store=MockMemoryStore(),
         memory_manager=MockMemoryManager(),
         verifier=MockVerifier(),
         answer_generator=MockAnswerGenerator(),
-        llm=RetryingLLM(),
+        llm=llm,  # 同一个实例
     )
-    # 直接调用归集逻辑，隔离出 trace 记录这一件事
-    from app.core.types import AgentState
 
-    state = AgentState(question="x")
-    orch._absorb_usage(state, RetryingLLM())
+    state = orch.run("什么是 attention", enable_memory=False)
 
     retries = [e for e in state.trace if e.stage == "llm" and e.event == "retry"]
     assert len(retries) == 1
+    assert retries[0].detail["phase"] == "router"
     assert retries[0].detail["retries"] == 1
     assert retries[0].detail["retry_latency_ms"] == 600.0
+
+
+@pytest.mark.parametrize(
+    "stage", ["router", "planner", "generate", "verify", "memory_write"]
+)
+def test_retry_event_tags_each_stage(stage):
+    """事件必须标明是哪个阶段发生的重试，便于 RQ4 分项统计。"""
+    from app.core.types import AgentState
+
+    llm = RetryingLLM()
+    orch = build_orchestrator(
+        router=RuleBasedRouter(),
+        planner=MockPlanner(),
+        retriever=MockRetriever(),
+        memory_store=MockMemoryStore(),
+        memory_manager=MockMemoryManager(),
+        verifier=MockVerifier(),
+        answer_generator=MockAnswerGenerator(),
+        llm=llm,
+    )
+    state = AgentState(question="x")
+    orch._record_retry(state, stage)
+
+    retry = [e for e in state.trace if e.event == "retry"][0]
+    assert retry.detail["phase"] == stage
+
+
+def test_pipeline_latency_counts_retry_wait_once():
+    """端到端墙钟包含退避；usage 汇总不该再叠加一次。
+
+    用可控时钟模拟：pipeline 墙钟 1200ms，组件 usage 各自 100ms，
+    最终 state.usage.latency_ms 只应由墙钟贡献。
+    """
+    from app.core.types import AgentState
+
+    llm = RetryingLLM()
+    orch = build_orchestrator(
+        router=RuleBasedRouter(),
+        planner=MockPlanner(),
+        retriever=MockRetriever(),
+        memory_store=MockMemoryStore(),
+        memory_manager=MockMemoryManager(),
+        verifier=MockVerifier(),
+        answer_generator=MockAnswerGenerator(),
+        llm=llm,
+    )
+    state = AgentState(question="x")
+
+    # 组件 usage 不含退避，pipeline 末尾单独加墙钟
+    state.usage = state.usage.add(Usage(total_tokens=20, llm_calls=1, latency_ms=100))
+    state.usage = state.usage.add(Usage(latency_ms=1200))
+    orch._record_retry(state, "generate")  # 只写 trace，不改 usage
+
+    assert state.usage.latency_ms == 1300  # 100 + 1200，不是 1900
 
 
 def test_mock_component_without_retry_attributes_is_fine():

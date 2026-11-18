@@ -103,8 +103,10 @@ class OpenAICompatibleLLM:
             try:
                 resp = self._client.chat.completions.create(**kwargs)
                 latency_ms = (time.perf_counter() - t0) * 1000
-                # RQ4 的 latency 是用户实际等待时间：成功这一次 + 之前失败重试
-                return self._to_response(resp, latency_ms + self.last_retry_latency_ms)
+                # RQ4 的 latency 单一来源是 Orchestrator 的 pipeline 端到端墙钟，
+                # 它天然包含失败尝试与退避。这里只记本次成功调用的耗时，
+                # 否则同一段等待会在 usage 汇总时重复计入。
+                return self._to_response(resp, latency_ms)
             except Exception as exc:  # noqa: BLE001 - SDK 异常类型太多，统一判断
                 last_error = exc
                 # 记录这次失败尝试消耗的时间（含退避等待），RQ4 要算进端到端延迟
