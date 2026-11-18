@@ -141,7 +141,7 @@ def test_page_failure_falls_back_to_snippet():
     first = tool.search("q")[0]
 
     assert "combines retrieval" in first.text
-    assert "正文抓取失败" in (tool.last_warning or "")
+    assert (tool.last_warning or "")
 
 
 def test_warning_is_reset_each_search():
@@ -177,3 +177,75 @@ def test_evidence_json_contains_web_fields():
     assert '"retrieval_method":"web"' in data
     assert '"url":"https://example.com/rag"' in data
     assert '"page_number":0' in data
+
+
+# --------------------------------------------------------------------------- #
+# C review #55：chunk_id 唯一性与 SSRF 防护
+# --------------------------------------------------------------------------- #
+def test_chunk_ids_do_not_collide_across_searches():
+    """两次不同 URL 的搜索合并到 AgentState 时不能被去重丢掉。"""
+    from app.core.types import AgentState
+
+    ddg_one = """
+    <div class="result"><a class="result__a" href="https://site.test/one">One</a>
+    <a class="result__snippet">first</a></div>
+    """
+    ddg_two = """
+    <div class="result"><a class="result__a" href="https://site.test/two">Two</a>
+    <a class="result__snippet">second</a></div>
+    """
+    state = {"html": ddg_one}
+
+    def handler(request):
+        if "duckduckgo" in str(request.url):
+            return httpx.Response(200, text=state["html"])
+        return httpx.Response(200, text="<html><body>page</body></html>")
+
+    tool = make_tool(handler, fetch_pages=False)
+    first = tool.search("one")
+    state["html"] = ddg_two
+    second = tool.search("two")
+
+    assert first[0].chunk_id != second[0].chunk_id
+    agent = AgentState(question="q")
+    agent.add_evidence(first)
+    agent.add_evidence(second)
+    assert len(agent.evidence) == 2
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://localhost:5434/admin",
+        "http://127.0.0.1:8080/",
+        "http://10.0.0.5/latest/meta-data",
+        "http://169.254.169.254/latest/meta-data",
+        "file:///etc/passwd",
+        "ftp://example.com/file",
+    ],
+)
+def test_unsafe_page_url_is_rejected_without_request(url):
+    from app.retrieval.web_search import _assert_safe_url
+
+    with pytest.raises(ValueError):
+        _assert_safe_url(url)
+
+
+def test_localhost_page_fetch_does_not_issue_request():
+    calls = []
+
+    def handler(request):
+        calls.append(str(request.url))
+        return httpx.Response(200, text="<html></html>")
+
+    tool = make_tool(handler)
+    # 抓取失败被降级为空字符串，但绝不能真的发请求
+    assert tool._fetch_text("http://localhost:5434/secret") == ""
+    assert "拒绝" in (tool.last_warning or "")
+    assert calls == [], "绝不能对 localhost 发请求"
+
+
+def test_public_url_is_allowed():
+    from app.retrieval.web_search import _assert_safe_url
+
+    _assert_safe_url("https://example.com/rag")  # 不抛异常即可

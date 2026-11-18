@@ -18,6 +18,8 @@ DuckDuckGo 的 HTML 结构会变，解析器是"尽力而为"；对 JS 渲染页
 
 from __future__ import annotations
 
+import hashlib
+import ipaddress
 import re
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
@@ -30,6 +32,33 @@ __all__ = ["WebSearchTool", "WebResult"]
 
 _DDG_ENDPOINT = "https://html.duckduckgo.com/html/"
 _MAX_PAGE_CHARS = 4000
+_MAX_PAGE_BYTES = 2_000_000
+_ALLOWED_CONTENT_TYPES = ("text/html", "application/xhtml+xml", "text/plain")
+_LOCAL_HOSTS = {"localhost", "localhost.localdomain", "ip6-localhost"}
+
+# C review #55：chunk_id 用 web-{index} 会在多次 search 后碰撞，
+# state.add_evidence() 按 chunk_id 去重会静默丢掉后续查询结果。
+def _chunk_id(url: str) -> str:
+    digest = hashlib.sha256(url.strip().encode("utf-8")).hexdigest()[:16]
+    return f"web-{digest}"
+
+
+def _assert_safe_url(url: str) -> None:
+    """只放行公网 http/https，挡住 localhost / 私网 / 链路本地。"""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"不允许的 URL scheme: {parsed.scheme}")
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if not host or host in _LOCAL_HOSTS or host.endswith((".local", ".internal")):
+        raise ValueError(f"不允许访问本地主机名: {host}")
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return  # 普通域名，交给 DNS 解析
+    if not ip.is_global or ip.is_loopback or ip.is_link_local:
+        raise ValueError(f"不允许访问私网/本地地址: {host}")
+
+
 _SKIP_TAGS = {"script", "style", "noscript", "svg", "nav", "footer"}
 
 
@@ -149,7 +178,9 @@ class WebSearchTool:
             return []
 
         try:
+            _assert_safe_url(_DDG_ENDPOINT)
             response = self._client.get(_DDG_ENDPOINT, params={"q": query})
+            _assert_safe_url(str(response.url))  # 检查重定向后的最终地址
             response.raise_for_status()
             parser = _DDGResultParser()
             parser.feed(response.text)
@@ -176,7 +207,7 @@ class WebSearchTool:
 
         domain = urlparse(item.url).netloc or "web"
         return Evidence(
-            chunk_id=f"web-{index}",
+            chunk_id=_chunk_id(item.url),
             document_id=item.url,
             file_name=domain,
             page_number=0,
@@ -190,12 +221,22 @@ class WebSearchTool:
     # ------------------------------------------------------------------ #
     def _fetch_text(self, url: str) -> str:
         try:
+            _assert_safe_url(url)
             response = self._client.get(url)
+            _assert_safe_url(str(response.url))  # 重定向后重新检查，防 SSRF 绕过
             response.raise_for_status()
-        except Exception:  # noqa: BLE001 - 单页失败不该毁掉整次搜索
+            content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
+            if content_type and content_type not in _ALLOWED_CONTENT_TYPES:
+                self.last_warning = f"网页内容类型不受支持: {content_type}"
+                return ""
+            body = response.content[:_MAX_PAGE_BYTES]
+            if len(response.content) > _MAX_PAGE_BYTES:
+                self.last_warning = "网页响应过大，只处理前 2MB"
+        except Exception as exc:  # noqa: BLE001 - 单页失败不该毁掉整次搜索
+            self.last_warning = f"网页抓取被拒绝: {type(exc).__name__}: {exc}"
             return ""
         parser = _TextParser()
-        parser.feed(response.text)
+        parser.feed(body.decode(response.encoding or "utf-8", errors="replace"))
         return parser.text(self.max_page_chars)
 
     # ------------------------------------------------------------------ #
