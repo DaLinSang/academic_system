@@ -93,3 +93,14 @@ def test_semantic_recency_importance_ranking(memory_store):
 
     result = store.search("中文简短回答", user_id, top_k=1)
     assert [item.memory_id for item in result] == [newer.memory_id]
+
+
+def test_empty_user_search_does_not_call_embedding(memory_store):
+    store, user_id = memory_store
+
+    class FailingEmbedder:
+        def embed(self, text: str) -> list[float]:
+            raise AssertionError("embedding must not be called for an empty user")
+
+    store.embedder = FailingEmbedder()
+    assert store.search("请记住", user_id) == []

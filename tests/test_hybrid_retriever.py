@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import pytest
+
+from app.core.errors import IngestionError, RetrievalError
 from app.core.types import DocumentChunk, Evidence, RetrievalMethod
 from app.retrieval import hybrid_retriever
 from app.retrieval.hybrid_retriever import HybridRetriever
@@ -74,6 +77,37 @@ def test_retrieve_returns_empty_for_empty_query() -> None:
     assert retriever.retrieve("retrieval", top_k=0) == []
 
 
+def test_retrieve_uses_bm25_when_ollama_fails(monkeypatch) -> None:
+    class FailingEmbedder:
+        def embed(self, text: str) -> list[float]:
+            raise RetrievalError("Ollama unavailable")
+
+    retriever = HybridRetriever(embedder=FailingEmbedder())
+    monkeypatch.setattr(retriever, "_load_bm25_index", lambda: None)
+    monkeypatch.setattr(
+        retriever._bm25,
+        "retrieve",
+        lambda query, top_k: [make_evidence("chunk-a", "retrieval text", 1)],
+    )
+
+    results = retriever.retrieve("retrieval", top_k=2)
+
+    assert [result.chunk_id for result in results] == ["chunk-a"]
+    assert results[0].retrieval_method == RetrievalMethod.BM25
+    assert "Ollama unavailable" in retriever.last_warning
+
+
+def test_retrieve_clears_warning_on_next_query(monkeypatch) -> None:
+    retriever = HybridRetriever(embedder=FakeEmbedder())
+    retriever.last_warning = "previous failure"
+    monkeypatch.setattr(retriever, "_load_bm25_index", lambda: None)
+    monkeypatch.setattr(retriever._bm25, "retrieve", lambda query, top_k: [])
+    monkeypatch.setattr(retriever, "_vector_results", lambda embedding, limit: [])
+
+    assert retriever.retrieve("retrieval") == []
+    assert retriever.last_warning is None
+
+
 def test_load_bm25_index_rebuilds_from_persisted_chunks(monkeypatch) -> None:
     retriever = HybridRetriever(embedder=FakeEmbedder())
     chunks = [make_chunk("chunk-a", "persisted retrieval content", 1)]
@@ -105,6 +139,14 @@ def test_index_document_invalidates_bm25_cache(monkeypatch) -> None:
 
     assert retriever.index_document("demo.pdf") == 1
     assert retriever._bm25_loaded is False
+
+
+def test_index_document_rejects_image_pdf_without_ocr(monkeypatch) -> None:
+    retriever = HybridRetriever(embedder=FakeEmbedder())
+    monkeypatch.setattr(hybrid_retriever, "parse_pdf", lambda *args, **kwargs: [])
+
+    with pytest.raises(IngestionError, match="No searchable text"):
+        retriever.index_document("scanned.pdf")
 
 
 class FakeEvidenceConnection:

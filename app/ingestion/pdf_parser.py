@@ -1,6 +1,11 @@
 """PDF parsing and text chunking utilities."""
 
+import os
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
+from typing import Literal
 
 from pypdf import PdfReader
 
@@ -9,6 +14,41 @@ from app.core.types import DocumentChunk
 
 DEFAULT_CHUNK_SIZE = 800
 DEFAULT_OVERLAP = 100
+
+
+def _ocr_page(pdf_path: Path, page_number: int, *, required: bool) -> str:
+    """Read an image-only PDF page using optional Poppler and Tesseract CLIs."""
+    if not shutil.which("pdftoppm") or not shutil.which("tesseract"):
+        if required:
+            raise IngestionError("OCR requires pdftoppm and tesseract on PATH")
+        return ""
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="academic-ocr-") as temp_dir:
+            image_prefix = Path(temp_dir) / "page"
+            subprocess.run(
+                [
+                    "pdftoppm", "-f", str(page_number), "-l", str(page_number),
+                    "-singlefile", "-r", "200", "-png", str(pdf_path),
+                    str(image_prefix),
+                ],
+                check=True,
+                capture_output=True,
+                timeout=90,
+            )
+            result = subprocess.run(
+                [
+                    "tesseract", str(image_prefix.with_suffix(".png")), "stdout",
+                    "-l", os.environ.get("PDF_OCR_LANG", "eng"),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=90,
+            )
+            return result.stdout.replace("\x00", "")
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        raise IngestionError(f"OCR failed on page {page_number} of {pdf_path}") from exc
 
 
 def split_text(
@@ -79,8 +119,11 @@ def parse_pdf(
     document_id: str | None = None,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     overlap: int = DEFAULT_OVERLAP,
+    ocr_mode: Literal["auto", "off", "force"] = "auto",
 ) -> list[DocumentChunk]:
-    """Parse a PDF page by page and create text chunks."""
+    """Parse pages into chunks; optionally OCR pages with no text layer."""
+    if ocr_mode not in ("auto", "off", "force"):
+        raise IngestionError("ocr_mode must be auto, off, or force")
     if chunk_size <= 0:
         raise IngestionError("chunk_size must be greater than zero")
 
@@ -115,6 +158,11 @@ def parse_pdf(
             raise IngestionError(
                 f"Failed to extract page {page_number} from {pdf_path}"
             ) from exc
+
+        if ocr_mode == "force" or (ocr_mode == "auto" and not raw_text.strip()):
+            ocr_text = _ocr_page(path, page_number, required=ocr_mode == "force")
+            if ocr_text.strip():
+                raw_text = ocr_text
 
         page_text = raw_text.strip()
 
