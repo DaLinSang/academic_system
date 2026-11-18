@@ -13,6 +13,7 @@ from app.core.types import (
 )
 from app.ui import (
     claim_presentations,
+    memory_write_summary,
     pdf_page_count,
     safe_pdf_name,
     used_citations,
@@ -215,3 +216,59 @@ def test_verification_warning_does_not_hide_valid_draft_citations() -> None:
     )
 
     assert [item["index"] for item in used_citations(state)] == [1]
+
+
+def test_memory_summary_distinguishes_no_signal_from_failure() -> None:
+    state = AgentState(question="Explain RAG", enable_memory=True)
+    state.log(
+        "memory_write",
+        "stats",
+        skipped="no_signal",
+        proposed=0,
+        accepted=0,
+    )
+
+    assert memory_write_summary(state) == (
+        "info",
+        "本轮没有检测到需要长期保存的稳定信息。",
+    )
+
+    failed = AgentState(question="Remember this", enable_memory=True)
+    failed.log("memory_write", "error", error="database unavailable")
+    assert memory_write_summary(failed) == (
+        "error",
+        "长期记忆写入失败：database unavailable",
+    )
+
+
+def test_memory_summary_reports_confirmed_store_and_filtered_candidates() -> None:
+    stored = AgentState(question="Remember my preference", enable_memory=True)
+    stored.log(
+        "memory_write",
+        "stats",
+        skipped=None,
+        proposed=1,
+        accepted=1,
+    )
+    stored.log("memory_write", "end", stored=1)
+    assert memory_write_summary(stored) == (
+        "success",
+        "本轮已保存 1 条长期记忆。",
+    )
+
+    filtered = AgentState(question="Remember duplicate", enable_memory=True)
+    filtered.log(
+        "memory_write",
+        "stats",
+        skipped=None,
+        proposed=1,
+        accepted=0,
+        dropped_duplicate=1,
+        dropped_sensitive=0,
+        dropped_invalid=0,
+    )
+    filtered.log("memory_write", "end", stored=0)
+    assert memory_write_summary(filtered) == (
+        "info",
+        "模型建议 1 条记忆，但未保存：重复 1 条。",
+    )

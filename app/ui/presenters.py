@@ -62,6 +62,51 @@ def used_citations(state: AgentState) -> list[dict[str, Any]]:
     ]
 
 
+def memory_write_summary(state: AgentState) -> tuple[str, str]:
+    """Summarize the memory-write funnel without claiming an unconfirmed save."""
+    if not state.enable_memory:
+        return ("info", "本轮长期记忆已关闭。")
+
+    events = [event for event in state.trace if event.stage == "memory_write"]
+    errors = [event for event in events if event.event == "error"]
+    if errors:
+        detail = str(errors[-1].detail.get("error", "未知错误"))
+        return ("error", f"长期记忆写入失败：{detail}")
+
+    stats_events = [event for event in events if event.event == "stats"]
+    end_events = [event for event in events if event.event == "end"]
+    if not stats_events:
+        return ("info", "本轮没有可用的记忆写入决策记录。")
+
+    stats = stats_events[-1].detail
+    skipped = stats.get("skipped")
+    if skipped == "no_signal":
+        return ("info", "本轮没有检测到需要长期保存的稳定信息。")
+    if skipped:
+        return ("warning", f"本轮未生成可保存的记忆候选：{skipped}")
+
+    proposed = int(stats.get("proposed", 0) or 0)
+    accepted = int(stats.get("accepted", 0) or 0)
+    stored = int(end_events[-1].detail.get("stored", 0) or 0) if end_events else 0
+    if stored:
+        return ("success", f"本轮已保存 {stored} 条长期记忆。")
+    if accepted and not end_events:
+        return ("warning", f"已接受 {accepted} 条记忆候选，但没有写入完成记录。")
+    if proposed:
+        reasons = []
+        for key, label in (
+            ("dropped_duplicate", "重复"),
+            ("dropped_sensitive", "敏感信息"),
+            ("dropped_invalid", "格式无效"),
+        ):
+            count = int(stats.get(key, 0) or 0)
+            if count:
+                reasons.append(f"{label} {count} 条")
+        suffix = "；".join(reasons) or "未通过保存规则"
+        return ("info", f"模型建议 {proposed} 条记忆，但未保存：{suffix}。")
+    return ("info", "本轮模型没有建议保存长期记忆。")
+
+
 def safe_pdf_name(filename: str) -> str:
     """Return a path-safe PDF name and reject non-PDF uploads."""
     basename = Path(filename).name.strip()
