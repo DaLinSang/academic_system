@@ -47,18 +47,31 @@ __all__ = ["LLMMemoryManager", "find_sensitive", "looks_memorable"]
 # 闸 1：关键词预筛
 # --------------------------------------------------------------------------- #
 # 只放**强信号**。"我" 单独出现太常见（"帮我看看"），放进来会让几乎每轮都调模型。
+# 长信号：出现在句中任意位置都算（短语足够特异，误命中概率低）
 _MEMORY_SIGNALS = (
-    # 偏好
-    "我偏好", "我喜欢", "我习惯", "以后都", "之后都", "以后用", "下次", "记住", "别忘",
+    # 偏好 / 对未来回答方式的要求
+    "我偏好", "我喜欢", "我习惯", "我一直", "我目前", "我们现在",
+    "以后都", "之后都", "以后用", "以后回答", "以后请", "往后都", "从现在起",
+    "每次回答", "回答时请", "回答之前", "回答前请", "请先说明", "请记住", "别忘了",
+    "下次",
     # 背景
-    "我是", "我在读", "我在做", "我正在", "我研究", "我的项目", "我的方向", "我们组",
+    "我在读", "我在做", "我正在", "我研究", "我的项目", "我的方向", "我们组",
     # 任务进度
     "还没完成", "已经完成", "下一步", "正在写", "正在做",
 )
 
+# 短信号：只在句首或分句边界匹配。
+# Issue #31：此前 "我是" 用裸子串匹配，在「告诉我是自己查阅生成的」里误命中，
+# 导致一次性请求也被当成记忆信号，白白消耗一次模型调用。
+_MEMORY_SIGNALS_BOUNDARY = ("我是", "记住", "别忘")
+_CLAUSE_BOUNDARY = "，。；、！？ \n\t"
+
 _ENGLISH_SIGNALS = (
     "i prefer", "i'm working on", "i am working on", "my project", "my research",
     "remember that", "from now on", "always use", "never use", "next time",
+    # Issue #31：英文的"每次回答/回答前说明"偏好
+    "every time", "before answering", "in every answer", "always respond",
+    "please remember", "from now on please", "i want you to always",
 )
 
 # --------------------------------------------------------------------------- #
@@ -80,8 +93,11 @@ _SYSTEM_PROMPT = """你是学术助手的记忆管理器。判断这段对话里
 
 三层记忆：
 - profile：用户背景（专业、研究方向、身份、已修课程）
-- preference：回答偏好（语言、长度、格式、详细程度）
+- preference：回答偏好（语言、长度、格式、详细程度、**对未来回答方式的要求**）
 - task_state：任务进度（当前项目、已完成部分、待解决问题）
+
+**重要**：用户要求"以后/每次回答时都要这样做"属于 preference，即使句子形如指令。
+只描述本轮怎么做的一次性指令才不保存。
 
 必须同时满足三条才保存：
 1. 稳定：下次对话仍然成立。"今天好累"不算，"我在做 RAG 综述"算。
@@ -99,6 +115,23 @@ reason：一句中文，说明为什么值得保存，会写进实验日志。
 
 没有值得保存的内容时，输出空数组 []。
 
+例子（严格遵守）：
+
+用户："以后回答时请先说明是否引用了我的文档"
+→ [{"tier": "preference", "content": "用户希望回答时先说明是否引用了上传文档", "importance": 0.9, "reason": "对未来所有回答方式的要求"}]
+
+用户："请你在每次回答问题前加上'好的'"
+→ [{"tier": "preference", "content": "用户希望每次回答前先说'好的'", "importance": 0.8, "reason": "稳定的回答格式偏好"}]
+
+用户："我正在写 RAG 报告，实验部分还没有完成，请记住"
+→ [{"tier": "task_state", "content": "用户正在写 RAG 报告，实验部分尚未完成", "importance": 0.7, "reason": "当前项目进度"}]
+
+用户："请解释一下 RAG"
+→ []
+
+用户："记住我的邮箱是 test@example.com"
+→ []
+
 只输出 json 数组，不要输出任何其他内容：
 [{"tier": "profile|preference|task_state", "content": "用户...", "importance": 0.0, "reason": ""}]"""
 
@@ -107,13 +140,28 @@ reason：一句中文，说明为什么值得保存，会写进实验日志。
 # 工具函数
 # --------------------------------------------------------------------------- #
 def looks_memorable(question: str) -> bool:
-    """闸 1：这句话里有没有值得记忆的强信号。"""
-    text = question.strip().lower()
+    """闸 1：这句话里有没有值得记忆的强信号。
+
+    长信号任意位置匹配；短信号（"我是"/"记住"）只在句首或标点后匹配，
+    避免"告诉我是自己查的"这类句子误命中。
+    """
+    text = question.strip().casefold()
     if len(text) < 4:
         return False
     if any(signal in text for signal in _MEMORY_SIGNALS):
         return True
-    return any(signal in text for signal in _ENGLISH_SIGNALS)
+    if any(signal in text for signal in _ENGLISH_SIGNALS):
+        return True
+    for signal in _MEMORY_SIGNALS_BOUNDARY:
+        start = 0
+        while True:
+            index = text.find(signal, start)
+            if index == -1:
+                break
+            if index == 0 or text[index - 1] in _CLAUSE_BOUNDARY:
+                return True
+            start = index + 1
+    return False
 
 
 def find_sensitive(content: str) -> str | None:
