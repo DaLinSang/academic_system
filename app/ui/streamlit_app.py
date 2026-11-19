@@ -10,7 +10,7 @@ import streamlit as st
 from app.agent.factory import build_mock_orchestrator, build_stage1_orchestrator
 from app.agent.orchestrator import MODE_PRESETS
 from app.core.config import settings
-from app.core.types import AgentState
+from app.core.types import AgentState, ConversationTurn
 from app.ui.presenters import (
     claim_presentations,
     memory_write_summary,
@@ -214,11 +214,22 @@ def main() -> None:
             flags["enable_verification"] = enable_verification
             try:
                 with st.spinner("Agent 正在处理..."):
+                    # Issue #44：把此前轮次作为结构化历史传入，模型才能理解
+                    # "它/这个"等指代。只带 question 与最终 answer，不带完整 state。
+                    turns = [
+                        ConversationTurn(
+                            question=item["question"],
+                            answer=item["state"].final_answer,
+                            turn_index=idx,
+                        )
+                        for idx, item in enumerate(st.session_state.history)
+                    ]
                     state = orch.run(
                         question,
                         session_id=session_id,
                         user_id=user_id,
-                        turn_index=len(st.session_state.history),
+                        turn_index=len(turns),
+                        history=turns,
                         **flags,
                     )
                 st.session_state.history.append({"question": question, "state": state})
