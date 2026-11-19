@@ -98,6 +98,8 @@ class Orchestrator:
         answer_generator: AnswerGenerator,
         llm: LLM,
         top_k: int = 5,
+        enable_replan: bool = True,
+        max_replans: int = 1,
     ) -> None:
         self.router = router
         self.planner = planner
@@ -108,6 +110,10 @@ class Orchestrator:
         self.answer_generator = answer_generator
         self.llm = llm
         self.top_k = top_k
+        # Issue #47：校验失败后的重规划预算。默认 1 次——再多成本失控，
+        # 而且 RQ4 会把"修复过程"和"正常回答"混在一起统计。
+        self.enable_replan = enable_replan
+        self.max_replans = max(0, min(max_replans, 2))
 
     # ------------------------------------------------------------------ #
     # 主入口
@@ -135,6 +141,7 @@ class Orchestrator:
             enable_verification=enable_verification,
         )
         t_total = time.perf_counter()
+        replan_budget = self.max_replans  # 每次 run 独立预算，绝不改实例配置
         state.log("pipeline", "start", question=question)
 
         # 1) 记忆读取
@@ -171,6 +178,19 @@ class Orchestrator:
         # 6) 校验
         if enable_verification:
             self._run_verification(state)
+
+            # 6.5) 校验发现问题后的重规划（Issue #47）。
+            # 预算是"每次 run"的局部变量，不是实例字段——Streamlit 会缓存并复用
+            # 同一个 Orchestrator，改实例字段会让第一个请求之后永久失去重规划能力。
+            if (
+                self.enable_replan
+                and state.unsupported_claims
+                and route.need_planning
+            ):
+                if replan_budget > 0:
+                    replan_budget = self._maybe_replan(state, route, replan_budget)
+                else:
+                    state.log("replan", "skip", reason="budget_exhausted")
 
         # 7) 组装最终答案
         state.final_answer = self._compose_final(state)
@@ -316,8 +336,15 @@ class Orchestrator:
                     step.status = StepStatus.DONE
                     step.result_summary = f"命中 {len(found)} 个片段"
 
+            # llm 类步骤当前不单独执行，分析统一在 AnswerGenerator 里完成。
+            # 标 SKIPPED 而不是 PENDING —— PENDING 暗示"还没走到"，但它其实
+            # 已经被有意跳过了，如实记录才不会让报告误读。
+            for step in state.plan:
+                if step.tool == "llm" and step.status is StepStatus.PENDING:
+                    step.status = StepStatus.SKIPPED
+                    step.result_summary = "由 AnswerGenerator 统一完成，不作为独立工具执行"
+
             # 已处理（DONE / FAILED / SKIPPED）的步骤数。
-            # llm 类步骤当前不单独执行，保持 PENDING 是如实反映，不要假装完成。
             state.current_step = sum(
                 1 for s in state.plan if s.status is not StepStatus.PENDING
             )
@@ -361,6 +388,90 @@ class Orchestrator:
             except Exception as exc:  # noqa: BLE001
                 state.errors.append(f"verifier: {type(exc).__name__}: {exc}")
                 state.log("verify", "error", error=str(exc))
+
+    def _maybe_replan(
+        self, state: AgentState, route: RouteDecision, budget: int
+    ) -> int:
+        """校验发现可判定的 unsupported claim 后再规划一轮，返回剩余预算。
+
+        不给 `Planner.plan()` 加参数（那是公共契约）：把失败信息拼进 question
+        字符串，Mock 与真实 Planner 都能直接吃。
+
+        C review #52：SemanticVerifier 在无法判断时会输出
+        `status=UNSUPPORTED + note="UNVERIFIED: ..."`，这不是"事实被否定"，
+        不能因此触发额外规划/检索/生成，否则 RQ3/RQ4 会被污染。
+        """
+        if budget < 1:
+            state.log("replan", "skip", reason="budget_exhausted")
+            return budget
+
+        # 只把"能判定为无支撑"的 claim 作为重规划输入
+        determinable = [
+            c for c in state.unsupported_claims
+            if not (c.note or "").startswith("UNVERIFIED:")
+        ]
+        if not determinable:
+            state.log(
+                "replan",
+                "skip",
+                reason="unverified_only" if state.unsupported_claims else "no_unsupported",
+            )
+            return budget
+
+        unsupported = [c.claim for c in determinable][:3]
+        retry_question = (
+            f"{state.question}\n\n"
+            f"上一轮回答中以下内容缺少证据，请规划补充检索：{'；'.join(unsupported)}"
+        )
+
+        with self._stage(state, "replan") as ok:
+            if not ok:
+                return budget
+            try:
+                new_plan = self.planner.plan(retry_question, route, state.memory_context)
+            except Exception as exc:  # noqa: BLE001 - 重规划失败不能毁掉已有回答
+                state.errors.append(f"replan: {type(exc).__name__}: {exc}")
+                state.log("replan", "error", error=str(exc))
+                return budget
+
+            self._absorb_usage(state, self.planner)
+            state.log(
+                "replan",
+                "start",
+                unsupported=len(determinable),
+                steps=len(new_plan),
+            )
+
+            # 用新的检索查询补证据；state.add_evidence 按 chunk_id 去重，不会重复
+            self._run_retrieval_with_plan(state, new_plan)
+
+            # 重新生成与校验一次，然后无条件停手
+            with self._stage(state, "generate") as gen_ok:
+                if gen_ok:
+                    state.draft_answer = self.answer_generator.generate(state)
+                    state.build_citations()
+                    state.log("generate", "end", chars=len(state.draft_answer), replan=True)
+            if state.evidence:
+                self._run_verification(state)
+
+            budget -= 1
+            state.log(
+                "replan",
+                "end",
+                evidence=len(state.evidence),
+                remaining_unsupported=len([c for c in state.unsupported_claims if not (c.note or "").startswith("UNVERIFIED:")]),
+            )
+            return budget
+
+    def _run_retrieval_with_plan(self, state: AgentState, plan: list) -> None:
+        """用给定计划执行检索；复用主路径的逻辑但临时替换 plan。"""
+        original = state.plan
+        state.plan = plan
+        try:
+            self._run_retrieval(state)
+        finally:
+            # 保留重规划的步骤供报告查看，但把状态恢复为"本轮最终计划"
+            state.plan = original + [s for s in plan if s not in original]
 
     def _write_memory(self, state: AgentState) -> None:
         """只在 enable_memory 时写入，且只写 MemoryManager 认为值得存的。"""

@@ -153,20 +153,21 @@ def test_retrieval_steps_marked_failed_on_error():
     assert all("RuntimeError" in (s.result_summary or "") for s in retrieval_steps)
 
 
-def test_llm_steps_stay_pending():
-    """llm 类步骤当前不单独执行，保持 PENDING 是如实反映，不能假装完成。"""
+def test_llm_steps_marked_skipped():
+    """llm 步骤不单独执行，标 SKIPPED 比 PENDING 更如实。"""
     state = build().run(COMPLEX, enable_memory=False)
 
     llm_steps = [s for s in state.plan if s.tool == "llm"]
     assert llm_steps, "计划里应有 llm 步骤"
-    assert all(s.status is StepStatus.PENDING for s in llm_steps)
+    assert all(s.status is StepStatus.SKIPPED for s in llm_steps)
+    assert all("AnswerGenerator" in (s.result_summary or "") for s in llm_steps)
 
 
 def test_current_step_counts_processed_steps():
     state = build().run(COMPLEX, enable_memory=False)
 
     processed = sum(1 for s in state.plan if s.status is not StepStatus.PENDING)
-    assert state.current_step == processed == 2
+    assert state.current_step == processed == 3
 
 
 # --------------------------------------------------------------------------- #
