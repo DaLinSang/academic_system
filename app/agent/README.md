@@ -22,7 +22,7 @@ class Orchestrator:
     def __init__(self, *, router, planner, retriever, memory_store,
                  memory_manager, verifier, answer_generator, llm, top_k=5): ...
     def run(self, question, *, session_id="default", user_id="default",
-            turn_index=0, enable_routing=True, enable_retrieval=True,
+            turn_index=0, history=None, enable_routing=True, enable_retrieval=True,
             enable_memory=True, enable_verification=True) -> AgentState: ...
 ```
 
@@ -75,6 +75,44 @@ class RunLogger:
 
 **只负责落盘，不算指标。** 指标由成员 C 在 `app/evaluation/` 里实现，
 口径见 `docs/eval-contract.md`。
+
+### SessionStore（用户聊天存储）
+
+```python
+class SessionStore:
+    def __init__(self, base_dir: Path = Path("runs/sessions")): ...
+    def append(self, state: AgentState, *, user_id=None, session_id=None) -> Path: ...
+    def load(self, user_id, session_id) -> list[dict]: ...
+    def restore(self, user_id, session_id) -> list[AgentState]: ...
+    def list_sessions(self, user_id) -> list[SessionSummary]: ...
+    def clear(self, user_id, session_id) -> bool: ...
+```
+
+落盘位置：`runs/sessions/<user_id>/<session_id>.jsonl`（追加式）。
+
+**SessionStore vs RunLogger 边界（Issue #32 A 部分）**：
+
+| | RunLogger | SessionStore |
+|---|---|---|
+| 用途 | 实验记录（评测跑批） | 用户聊天历史（Streamlit 会话） |
+| 目录 | `runs/<run_id>/` | `runs/sessions/<user>/<session>.jsonl` |
+| 谁写 | 评测脚本显式调用 | UI 每轮调用 |
+| 可变性 | 固定不可变，保证可复现 | 可清空、可删除 |
+| 内容 | 一次实验 N 个模式的完整 AgentState | 一轮问答 + 可复查的 AgentState 子集 |
+
+**两者不混用**：实验数据要稳定可复现，聊天历史要能删能改，用途相反。
+
+**恢复与 turn_index 连续性**：
+- `restore()` 读回的每轮带原本的 `turn_index`；
+- 下一轮 `turn_index = len(恢复的历史)`（从 0 起、连续递增）；
+- 清空会话后从 0 重新开始；
+- `ConversationTurn` 只带 question/answer/turn_index，完整状态在 JSONL 里。
+
+**用户/工作区范围（Issue #32 决策）**：
+本阶段只按 `user_id` 隔离长期记忆与会话（见 B 的 #58），**不做 workspace**——
+PDF 索引全局共享，检索不带 workspace 维度。理由：RQ1–RQ4 不依赖 workspace，
+加了是研究范围外的复杂度。若将来要做，需另开 `!` 契约 PR 改 `Retriever.retrieve`
+与相关数据结构，并经三人同意。
 
 ## 4. 输入
 
@@ -138,10 +176,12 @@ print(orch.run("讲义里 Self-RAG 怎么决定要不要检索").final_answer)
 
 ```bash
 uv run pytest tests/test_contracts.py tests/test_answer_generator.py -v
+uv run pytest tests/test_session_boundary_a32.py -v   # Issue #32：会话边界与 turn_index 连续
 ```
 
 `test_contracts.py` 守编排层（四模式、降级、B1/B2 隔离），
-`test_answer_generator.py` 守回答生成（18 项）。
+`test_answer_generator.py` 守回答生成，`test_session_boundary_a32.py` 守 SessionStore
+与 RunLogger 目录边界、恢复后 turn_index 连续、会话/用户隔离、敏感信息脱敏。
 
 ## 10. 正常输出示例
 
@@ -165,18 +205,23 @@ Self-RAG 通过 reflection token 判断是否需要检索 [1]。
 
 ## 12. 当前限制
 
-- Planner 仍为 Mock（固定四步），`complex_task` 的多步执行尚不真实
-- 没有 ReAct 式的"观察-再决策"循环，检索只执行一轮
-- `web_search` 与代码执行工具未接入
-- 记忆写回依赖 `MemoryManager`，运行时默认是 `LLMMemoryManager`（`app/memory/manager.py`）
-- 阶段 1 的真实装配：`PostgresMemoryStore`（B，存储）+ `LLMMemoryManager`（A，策略）
-- 规则版 `RuleBasedMemoryManager`（`app/memory/policy.py`）保留但不启用，仅供 RQ2 消融；
+当前仍存在的边界（如实记录，供报告"局限性"章节引用）：
+
+- Planner 生成的步骤中，`llm` 类步骤由 `_maybe_replan` 统一处理，不做逐步 ReAct 循环；
+- 检索失败会降级（向量挂→BM25、无证据→拒答），但**没有自动重试换策略的恢复循环**；
+- 网页搜索已接入（Issue #40/#41），但搜索后端是 DuckDuckGo HTML 端点，HTML 结构变化会降级到搜索摘要；
+- 记忆写回依赖 `MemoryManager`，运行时默认是 `LLMMemoryManager`（`app/memory/manager.py`）；
+  规则版 `RuleBasedMemoryManager`（`app/memory/policy.py`）保留但不启用，仅供 RQ2 消融；
   切换方式 `build_stage1_orchestrator(memory_strategy="rule")`
-- 单轮对话，`turn_index` 未参与上下文构造
+- 多轮上下文（Issue #44）已实现：`run(history=...)` 把历史送进 Router/Planner/AnswerGenerator，
+  模型能理解"它/这个"指代；历史只用于消解指代，不是事实来源，事实仍只取自证据
+- 工作区（workspace）隔离本阶段不做：记忆/会话按 `user_id` 隔离，PDF 全局共享（见上文决策）
+- **实验影响**：开启历史后 B1–B4 输出会变，正式实验必须在功能冻结后统一跑，边改边跑的数据作废
 
 ## 13. 最近一次验收状态
 
-- 日期：2026-11-13
-- 验收人：待 B、C 复核
-- 结论：自测通过。本分支 80 项测试全绿 + ruff 全过；
-  与 `feat/routing-llm-router` 合并后为 105 项。
+- 日期：2026-11-19
+- 验收人：A 自测；B/C 在 PR 上复核
+- 结论：全量测试通过（含 #32 会话边界 7 项、#44 多轮 21 项），ruff 全过。
+  已交付：路由/规划/生成/校验/记忆/网页搜索/多轮上下文/会话持久化；
+  下一节点是 C 的评测标注集与三次正式实验（Issue #49）。
