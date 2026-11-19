@@ -2,9 +2,9 @@
 
 更新日期：2026-11-19
 
-当前开发分支：`feat/c-ui-web-sessions`
+当前开发分支：`feat/c-web-multiturn-evaluation`
 
-基线提交：`origin/main@0b56252`（已包含 Web Search、SessionStore 与多轮上下文）
+基线提交：`origin/main@730f6ad`（已包含 Web Search、SessionStore、多轮上下文与 C 侧 Web/会话 UI）
 
 ## 任务边界
 
@@ -31,6 +31,20 @@ embedding、数据库或记忆存储。
 - 页面刷新或服务重启后通过 SessionStore.restore 恢复完整 AgentState
 - “清空当前会话”仅清除当前 JSONL，不修改长期记忆或 PDF
 - 已补纯 presenter、SessionStore 与多轮集成测试
+
+### Web / 多轮评测与数据集扩展（Issue #43 / #49）
+
+- 标注集从 12 条扩展到 50 条，覆盖中英文、三类 route、Web、无证据和三组两轮记忆
+- 新增可选 `gold_need_web`，旧数据默认 false 并保持向后兼容
+- RQ1 新增 Web 搜索触发准确率与不必要联网率
+- RQ2 新增跨轮记忆命中率
+- RQ3 新增网页引用有效率
+- RQ4 使用 pipeline trace 墙钟，避免组件 latency 与总 latency 重复累计
+- batch runner 支持 `repeats=3`，自动生成 4x3 共 12 个 run
+- 新增 `experiment_summary.json`，按模式输出 mean、sample std 与 n
+- Mock 50 条 4x3 已验证 12 个目录、metrics 与五项 meta 完整
+- Real B4 q001 已用 pgvector + Ollama embedding + 本地聊天模型跑通；本地 1B
+  输出仅作为链路 smoke，不冒充团队正式模型实验结果
 
 ### Claim Verification V1
 

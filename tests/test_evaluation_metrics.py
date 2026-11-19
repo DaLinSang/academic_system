@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 
 from app.evaluation.metrics import calculate_metrics, write_metrics
 
@@ -34,7 +35,9 @@ def _write_run(tmp_path, samples, rows):
     return run_dir, dataset_path
 
 
-def _sample(sample_id, route, *, sources=None, expected_memory=None):
+def _sample(
+    sample_id, route, *, sources=None, expected_memory=None, gold_need_web=False
+):
     sources = sources or []
     return {
         "id": sample_id,
@@ -43,6 +46,7 @@ def _sample(sample_id, route, *, sources=None, expected_memory=None):
         "turn_index": 1 if expected_memory else 0,
         "gold_route": route,
         "gold_need_retrieval": route != "direct",
+        "gold_need_web": gold_need_web,
         "gold_sources": sources,
         "gold_pages": sorted({source["page_number"] for source in sources}),
         "gold_claims": [],
@@ -118,12 +122,16 @@ def test_calculate_metrics_covers_rq1_to_rq4(tmp_path) -> None:
     assert metrics["rq1"]["unnecessary_retrieval_rate"] == 0
     assert metrics["rq1"]["missed_retrieval_rate"] == 1
     assert metrics["rq1"]["confusion_matrix"]["document_retrieval"]["direct"] == 1
+    assert metrics["rq1"]["web_search_trigger_accuracy"] == 1
+    assert metrics["rq1"]["unnecessary_web_search_rate"] == 0
     assert metrics["rq2"]["memory_hit_rate"] == 1
+    assert metrics["rq2"]["cross_turn_memory_hit_rate"] == 1
     assert metrics["rq2"]["memory_write_rejection_rate"] == 0.5
     assert metrics["rq2"]["cross_session_results"][0]["memory_hit"] is True
     assert metrics["rq3"]["claim_support_rate"] == 0.5
     assert metrics["rq3"]["citation_precision"] == 0.5
     assert metrics["rq3"]["citation_recall"] == 1
+    assert metrics["rq3"]["web_citation_valid_rate"] is None
     assert metrics["rq4"]["tokens_per_query"] == 20
     assert metrics["rq4"]["cost_usd_per_query"] == 0.2
     assert metrics["rq4"]["latency_ms_per_query"] == 200
@@ -149,6 +157,73 @@ def test_zero_denominators_are_null(tmp_path) -> None:
     assert metrics["rq4"]["error_recovery_rate"] is None
 
 
+def test_web_and_cross_turn_metrics_use_trace_and_supported_citations(tmp_path) -> None:
+    samples = [
+        _sample("w1", "document_retrieval", gold_need_web=True),
+        _sample("w2", "direct", gold_need_web=False),
+        _sample("m2", "direct", expected_memory=["English"]),
+    ]
+    web_evidence = {
+        "chunk_id": "web-abc",
+        "url": "https://example.com/rag",
+        "file_name": "example.com",
+        "page_number": 0,
+    }
+    rows = [
+        _row(
+            0,
+            "document_retrieval",
+            True,
+            evidence=[web_evidence],
+            claims=[
+                {
+                    "status": "supported",
+                    "supporting_evidence": ["web-abc"],
+                }
+            ],
+            citations=[{"index": 1, **web_evidence}],
+            trace=[
+                {
+                    "stage": "web_search",
+                    "event": "decision",
+                    "detail": {"should_search": True},
+                },
+                {
+                    "stage": "generate",
+                    "event": "citation_audit",
+                    "detail": {"used": [1], "invalid": []},
+                },
+            ],
+        ),
+        _row(
+            1,
+            "direct",
+            False,
+            trace=[
+                {
+                    "stage": "web_search",
+                    "event": "decision",
+                    "detail": {"should_search": True},
+                }
+            ],
+        ),
+        _row(
+            2,
+            "direct",
+            False,
+            memory_context=[{"content": "The user prefers English."}],
+        ),
+    ]
+    run_dir, dataset_path = _write_run(tmp_path, samples, rows)
+
+    metrics = calculate_metrics(run_dir, dataset_path)
+
+    assert metrics["rq1"]["web_search_trigger_accuracy"] == 2 / 3
+    assert metrics["rq1"]["unnecessary_web_search_rate"] == 0.5
+    assert metrics["rq2"]["cross_turn_memory_hit_rate"] == 1
+    assert metrics["rq3"]["web_citation_valid_rate"] == 1
+
+
 def test_unverified_claims_are_reported_but_excluded_from_support_rate(tmp_path) -> None:
     samples = [_sample("s1", "document_retrieval")]
     rows = [
@@ -172,3 +247,35 @@ def test_unverified_claims_are_reported_but_excluded_from_support_rate(tmp_path)
     assert metrics["rq3"]["claim_support_rate"] is None
     assert metrics["rq3"]["counts"]["claims"] == 0
     assert metrics["rq3"]["counts"]["unverified_claims"] == 1
+
+
+def test_rq4_uses_pipeline_wall_clock_without_double_counting(tmp_path) -> None:
+    samples = [_sample("s1", "direct")]
+    started = datetime(2026, 1, 1, tzinfo=UTC)
+    rows = [
+        _row(
+            0,
+            "direct",
+            False,
+            usage={"total_tokens": 10, "cost_usd": 0, "latency_ms": 2000},
+            trace=[
+                {
+                    "stage": "pipeline",
+                    "event": "start",
+                    "timestamp": started.isoformat(),
+                    "detail": {},
+                },
+                {
+                    "stage": "pipeline",
+                    "event": "end",
+                    "timestamp": (started + timedelta(seconds=1)).isoformat(),
+                    "detail": {},
+                },
+            ],
+        )
+    ]
+    run_dir, dataset_path = _write_run(tmp_path, samples, rows)
+
+    metrics = calculate_metrics(run_dir, dataset_path)
+
+    assert metrics["rq4"]["latency_ms_per_query"] == 1000

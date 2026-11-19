@@ -36,6 +36,7 @@ def run_evaluation(
     runs_dir: Path | None = None,
     dataset_name: str = "annotated_v1",
     orchestrator_factory: OrchestratorFactory | None = None,
+    repeats: int = 1,
 ) -> list[Path]:
     """Run each mode independently while preserving sample order within a mode."""
     if top_k < 1:
@@ -45,35 +46,40 @@ def run_evaluation(
         raise ValueError(f"Unknown evaluation modes: {unknown_modes}")
     if not samples:
         raise ValueError("At least one sample is required")
+    if repeats < 1:
+        raise ValueError("repeats must be at least 1")
 
     factory = orchestrator_factory or _factory(real)
     run_paths: list[Path] = []
-    for mode in modes:
-        flags = dict(MODE_PRESETS[mode])
-        orchestrator = factory(top_k)
-        with RunLogger(
-            mode=mode,
-            flags=flags,
-            dataset_name=dataset_name,
-            dataset_size=len(samples),
-            model=_model_name(real),
-            top_k=top_k,
-            runs_dir=runs_dir,
-            extra={
-                "runtime": "real" if real else "mock",
-                "sample_ids": [sample["id"] for sample in samples],
-            },
-        ) as run:
-            for sample in samples:
-                state = orchestrator.run(
-                    sample["question"],
-                    session_id=f"{sample['user_id']}-session-{sample['turn_index']}",
-                    user_id=sample["user_id"],
-                    turn_index=sample["turn_index"],
-                    **flags,
-                )
-                run.log(state)
-            run_paths.append(run.run_dir)
+    for repeat_index in range(1, repeats + 1):
+        for mode in modes:
+            flags = dict(MODE_PRESETS[mode])
+            orchestrator = factory(top_k)
+            with RunLogger(
+                mode=mode,
+                flags=flags,
+                dataset_name=dataset_name,
+                dataset_size=len(samples),
+                model=_model_name(real),
+                top_k=top_k,
+                runs_dir=runs_dir,
+                extra={
+                    "runtime": "real" if real else "mock",
+                    "sample_ids": [sample["id"] for sample in samples],
+                    "repeat_index": repeat_index,
+                    "repeat_count": repeats,
+                },
+            ) as run:
+                for sample in samples:
+                    state = orchestrator.run(
+                        sample["question"],
+                        session_id=f"{sample['user_id']}-session-{sample['turn_index']}",
+                        user_id=sample["user_id"],
+                        turn_index=sample["turn_index"],
+                        **flags,
+                    )
+                    run.log(state)
+                run_paths.append(run.run_dir)
     return run_paths
 
 
@@ -95,6 +101,7 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--real", action="store_true")
     parser.add_argument("--runs-dir", type=Path, default=None)
+    parser.add_argument("--repeats", type=int, default=1)
     args = parser.parse_args()
 
     samples = load_dataset(args.dataset)
@@ -110,7 +117,16 @@ def main() -> int:
         real=args.real,
         runs_dir=args.runs_dir,
         dataset_name=args.dataset.stem,
+        repeats=args.repeats,
     )
+    if args.repeats > 1:
+        from app.evaluation.aggregate import write_experiment_summary
+        from app.evaluation.metrics import write_metrics
+
+        for path in paths:
+            write_metrics(path, args.dataset)
+        output_dir = args.runs_dir or settings.runtime.runs_dir
+        print(write_experiment_summary(paths, output_dir / "experiment_summary.json"))
     for path in paths:
         print(path)
     return 0

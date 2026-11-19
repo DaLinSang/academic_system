@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from app.core.types import RouteType
 from app.evaluation.dataset import DEFAULT_DATASET, load_dataset
@@ -72,6 +74,40 @@ def _citation_audit(row: dict[str, Any]) -> tuple[list[int], list[int]]:
     return [], []
 
 
+def _web_search_requested(row: dict[str, Any]) -> bool:
+    """Return the recorded policy decision; missing trace means no web request."""
+    for event in reversed(row.get("trace", [])):
+        if event.get("stage") == "web_search" and event.get("event") == "decision":
+            return bool(event.get("detail", {}).get("should_search"))
+    return False
+
+
+def _valid_http_url(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    parsed = urlparse(value)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _pipeline_wall_latency_ms(row: dict[str, Any]) -> float:
+    """Use pipeline trace timestamps so nested component latency is not double-counted."""
+    events = [
+        event
+        for event in row.get("trace", [])
+        if event.get("stage") == "pipeline" and event.get("event") in {"start", "end"}
+    ]
+    starts = [event for event in events if event.get("event") == "start"]
+    ends = [event for event in events if event.get("event") == "end"]
+    if starts and ends:
+        try:
+            started = datetime.fromisoformat(str(starts[0]["timestamp"]))
+            finished = datetime.fromisoformat(str(ends[-1]["timestamp"]))
+            return max(0.0, (finished - started).total_seconds() * 1000)
+        except (KeyError, TypeError, ValueError):
+            pass
+    return float(row.get("usage", {}).get("latency_ms", 0) or 0)
+
+
 def calculate_metrics(
     run_dir: Path, dataset_path: Path = DEFAULT_DATASET
 ) -> dict[str, Any]:
@@ -84,10 +120,13 @@ def calculate_metrics(
     confusion = {gold: {pred: 0 for pred in ROUTES} for gold in ROUTES}
     route_correct = direct_total = unnecessary = retrieval_total = missed = 0
     memory_expected = memory_hits = proposed = accepted = 0
+    cross_turn_expected = cross_turn_hits = 0
     cross_session = []
     supported = claim_total = unverified_claims = 0
     used_total = invalid_total = cited_gold_total = gold_source_total = 0
     tokens = cost = latency = error_rows = recovered = 0
+    web_correct = web_unnecessary = web_negative = 0
+    web_citations = valid_web_citations = 0
 
     for sample, row in aligned:
         route = row.get("route") or {}
@@ -104,6 +143,13 @@ def calculate_metrics(
             retrieval_total += 1
             missed += not need_retrieval
 
+        gold_need_web = bool(sample.get("gold_need_web", False))
+        predicted_web = _web_search_requested(row)
+        web_correct += predicted_web == gold_need_web
+        if not gold_need_web:
+            web_negative += 1
+            web_unnecessary += predicted_web
+
         expected = [text.casefold() for text in sample.get("expected_memory", [])]
         if expected:
             memory_expected += 1
@@ -112,6 +158,9 @@ def calculate_metrics(
             ).casefold()
             hit = all(text in contents for text in expected)
             memory_hits += hit
+            if int(sample.get("turn_index", 0) or 0) > 0:
+                cross_turn_expected += 1
+                cross_turn_hits += hit
             cross_session.append(
                 {
                     "sample_id": sample["id"],
@@ -158,10 +207,35 @@ def calculate_metrics(
         cited_gold_total += len(used_sources & gold_sources)
         gold_source_total += len(gold_sources)
 
+        evidence = {
+            item.get("chunk_id"): item
+            for item in row.get("evidence", [])
+            if item.get("chunk_id")
+        }
+        supported_chunks = {
+            chunk_id
+            for claim in row.get("claims", [])
+            if claim.get("status") in {"supported", "partially_supported"}
+            for chunk_id in claim.get("supporting_evidence", [])
+        }
+        for index in used:
+            citation = citations.get(index)
+            if not citation or index in invalid or not citation.get("url"):
+                continue
+            web_citations += 1
+            chunk_id = citation.get("chunk_id")
+            matching_evidence = evidence.get(chunk_id, {})
+            if (
+                _valid_http_url(citation.get("url"))
+                and matching_evidence.get("url") == citation.get("url")
+                and chunk_id in supported_chunks
+            ):
+                valid_web_citations += 1
+
         usage = row.get("usage", {})
         tokens += int(usage.get("total_tokens", 0) or 0)
         cost += float(usage.get("cost_usd", 0) or 0)
-        latency += float(usage.get("latency_ms", 0) or 0)
+        latency += _pipeline_wall_latency_ms(row)
         if row.get("errors"):
             error_rows += 1
             recovered += bool(str(row.get("final_answer", "")).strip())
@@ -178,9 +252,20 @@ def calculate_metrics(
             "unnecessary_retrieval_rate": _ratio(unnecessary, direct_total),
             "missed_retrieval_rate": _ratio(missed, retrieval_total),
             "confusion_matrix": confusion,
+            "web_search_trigger_accuracy": _ratio(web_correct, n),
+            "unnecessary_web_search_rate": _ratio(web_unnecessary, web_negative),
+            "web_counts": {
+                "correct": web_correct,
+                "samples": n,
+                "unnecessary": web_unnecessary,
+                "gold_no_web": web_negative,
+            },
         },
         "rq2": {
             "memory_hit_rate": _ratio(memory_hits, memory_expected),
+            "cross_turn_memory_hit_rate": _ratio(
+                cross_turn_hits, cross_turn_expected
+            ),
             "memory_write_rejection_rate": _ratio(proposed - accepted, proposed),
             "cross_session_results": cross_session,
             "counts": {
@@ -188,12 +273,17 @@ def calculate_metrics(
                 "hits": memory_hits,
                 "proposed": proposed,
                 "accepted": accepted,
+                "cross_turn_expected": cross_turn_expected,
+                "cross_turn_hits": cross_turn_hits,
             },
         },
         "rq3": {
             "claim_support_rate": _ratio(supported, claim_total),
             "citation_precision": _ratio(used_total - invalid_total, used_total),
             "citation_recall": _ratio(cited_gold_total, gold_source_total),
+            "web_citation_valid_rate": _ratio(
+                valid_web_citations, web_citations
+            ),
             "counts": {
                 "supported_claims": supported,
                 "claims": claim_total,
@@ -202,6 +292,8 @@ def calculate_metrics(
                 "invalid_citations": invalid_total,
                 "cited_gold_sources": cited_gold_total,
                 "gold_sources": gold_source_total,
+                "web_citations": web_citations,
+                "valid_web_citations": valid_web_citations,
             },
         },
         "rq4": {
