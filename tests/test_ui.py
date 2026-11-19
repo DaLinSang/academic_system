@@ -8,6 +8,7 @@ from app.core.types import (
     ClaimCheck,
     ClaimStatus,
     Evidence,
+    RetrievalMethod,
     RouteDecision,
     RouteType,
 )
@@ -16,8 +17,10 @@ from app.ui import (
     memory_write_summary,
     pdf_page_count,
     safe_pdf_name,
+    source_status,
     used_citations,
     verification_notice,
+    web_search_summary,
 )
 
 
@@ -93,8 +96,39 @@ def test_claim_presentations_resolves_real_evidence_locator() -> None:
             "file_name": "Lec04.pdf",
             "page_number": 9,
             "locator": "Lec04.pdf p.9",
+            "url": None,
+            "is_web": False,
         }
     ]
+
+
+def test_claim_presentations_supports_clickable_web_sources() -> None:
+    state = AgentState(question="latest RAG release")
+    state.evidence = [
+        Evidence(
+            chunk_id="web-abc",
+            document_id="https://example.com/rag",
+            file_name="example.com",
+            page_number=0,
+            text="A current RAG release is available.",
+            score=0.9,
+            retrieval_method=RetrievalMethod.WEB,
+            url="https://example.com/rag",
+            title="RAG release",
+        )
+    ]
+    state.claims = [
+        ClaimCheck(
+            claim="A current RAG release is available.",
+            status=ClaimStatus.SUPPORTED,
+            supporting_evidence=["web-abc"],
+        )
+    ]
+
+    source = claim_presentations(state)[0]["sources"][0]
+    assert source["is_web"] is True
+    assert source["url"] == "https://example.com/rag"
+    assert source["locator"] == "RAG release · 网页"
 
 
 def test_unverified_claim_uses_neutral_warning_copy() -> None:
@@ -192,8 +226,86 @@ def test_normal_answer_displays_only_explicitly_used_citations() -> None:
             "file_name": "rag_paper.pdf",
             "page_number": 3,
             "quote": "Generator details.",
+            "url": None,
+            "title": None,
+            "is_web": False,
+            "locator": "rag_paper.pdf p.3",
         }
     ]
+
+
+def test_web_citation_keeps_clickable_url() -> None:
+    state = AgentState(question="latest")
+    state.evidence = [
+        Evidence(
+            chunk_id="web-1",
+            document_id="https://example.com/news",
+            file_name="example.com",
+            page_number=0,
+            text="Current information.",
+            score=0.9,
+            retrieval_method=RetrievalMethod.WEB,
+            url="https://example.com/news",
+            title="Current information",
+        )
+    ]
+    state.build_citations()
+    state.final_answer = "See the current information [1]."
+
+    citation = used_citations(state)[0]
+    assert citation["is_web"] is True
+    assert citation["url"] == "https://example.com/news"
+    assert citation["locator"] == "Current information · 网页"
+
+
+def test_web_search_summary_covers_not_triggered_success_and_failure() -> None:
+    skipped = AgentState(question="q")
+    skipped.log(
+        "web_search", "decision", should_search=False, reason="本地证据足够"
+    )
+    assert web_search_summary(skipped) == (
+        "info", "未触发网页搜索：本地证据足够"
+    )
+
+    searched = AgentState(question="q")
+    searched.log("web_search", "decision", should_search=True)
+    searched.log("web_search", "end", count=2, warning=None)
+    assert web_search_summary(searched) == (
+        "success", "已搜索并取得 2 条网页证据"
+    )
+
+    failed = AgentState(question="q")
+    failed.log("web_search", "error", error="offline")
+    assert web_search_summary(failed) == ("error", "网页搜索失败：offline")
+
+
+def test_source_status_distinguishes_web_document_direct_and_failure() -> None:
+    direct = AgentState(question="q")
+    direct.route = RouteDecision(route=RouteType.DIRECT)
+    assert source_status(direct)[0] == "direct"
+
+    document = AgentState(question="q")
+    document.evidence = [
+        Evidence(
+            chunk_id="d1", document_id="d", file_name="f.pdf",
+            page_number=1, text="doc", score=1.0,
+        )
+    ]
+    assert source_status(document)[0] == "document"
+
+    web = AgentState(question="q")
+    web.evidence = [
+        Evidence(
+            chunk_id="w1", document_id="https://example.com",
+            file_name="example.com", page_number=0, text="web", score=1.0,
+            retrieval_method=RetrievalMethod.WEB,
+            url="https://example.com",
+        )
+    ]
+    assert source_status(web)[0] == "web"
+
+    failed = AgentState(question="q", errors=["retrieval: offline"])
+    assert source_status(failed)[0] == "retrieval_failed"
 
 
 def test_verification_warning_does_not_hide_valid_draft_citations() -> None:

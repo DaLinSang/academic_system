@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import streamlit as st
 
 from app.agent.factory import build_mock_orchestrator, build_stage1_orchestrator
 from app.agent.orchestrator import MODE_PRESETS
+from app.agent.session_store import SessionStore
 from app.core.config import settings
 from app.core.types import AgentState, ConversationTurn
 from app.ui.presenters import (
@@ -16,8 +18,10 @@ from app.ui.presenters import (
     memory_write_summary,
     pdf_page_count,
     safe_pdf_name,
+    source_status,
     used_citations,
     verification_notice,
+    web_search_summary,
 )
 
 
@@ -48,7 +52,12 @@ def _render_claims(state: AgentState) -> None:
             getattr(st, notice[0])(notice[1])
         return
     for row in claim_presentations(state):
-        source_text = "；".join(source["locator"] for source in row["sources"])
+        source_text = "；".join(
+            f"[{source['locator']}]({source['url']})"
+            if source["is_web"] and source["url"]
+            else source["locator"]
+            for source in row["sources"]
+        )
         detail = f"{row['score_label']} {row['confidence']:.2f}"
         if source_text:
             detail += f" · 证据：{source_text}"
@@ -62,12 +71,18 @@ def _render_state(state: AgentState) -> None:
     st.markdown(state.final_answer)
     citations = used_citations(state)
     if citations:
-        with st.expander("页码引用", expanded=True):
+        with st.expander("来源引用", expanded=True):
             for citation in citations:
-                st.markdown(
-                    f"**[{citation['index']}] {citation['file_name']} "
-                    f"第 {citation['page_number']} 页**"
-                )
+                if citation["is_web"] and citation["url"]:
+                    st.markdown(
+                        f"**[{citation['index']}] "
+                        f"[{citation['locator']}]({citation['url']})**"
+                    )
+                else:
+                    st.markdown(
+                        f"**[{citation['index']}] {citation['file_name']} "
+                        f"第 {citation['page_number']} 页**"
+                    )
                 if citation["quote"]:
                     st.caption(citation["quote"])
     with st.expander("Claim Verification", expanded=True):
@@ -76,6 +91,10 @@ def _render_state(state: AgentState) -> None:
         if state.route:
             st.write("Router:", state.route.route.value, "-", state.route.reason)
         st.caption(f"用户：{state.user_id} · 会话：{state.session_id} · 轮次：{state.turn_index}")
+        source_level, source_message = source_status(state)[1:]
+        getattr(st, source_level)(source_message)
+        web_level, web_message = web_search_summary(state)
+        getattr(st, web_level)(web_message)
         memory_level, memory_message = memory_write_summary(state)
         getattr(st, memory_level)(memory_message)
         st.write(
@@ -170,21 +189,87 @@ def _render_memories(orch: Any, user_id: str, enabled: bool) -> None:
                     st.error(f"删除失败：{type(exc).__name__}: {exc}")
 
 
+def _session_store() -> SessionStore:
+    if "session_store" not in st.session_state:
+        st.session_state.session_store = SessionStore()
+    return st.session_state.session_store
+
+
+def _restore_history(store: SessionStore, user_id: str, session_id: str) -> None:
+    states = store.restore(user_id, session_id)
+    st.session_state.history = [
+        {"question": state.question, "state": state} for state in states
+    ]
+    st.session_state.loaded_session = (user_id, session_id)
+
+
+def _new_session_id() -> str:
+    return f"chat-{uuid4().hex[:8]}"
+
+
 def main() -> None:
-    st.set_page_config(page_title="Academic Agent", page_icon="📚", layout="wide")
-    st.title("📚 Agentic Academic Assistant")
+    st.set_page_config(page_title="Academic Agent", page_icon="A", layout="wide")
+    st.title("Agentic Academic Assistant")
     st.caption("文档问答 · 页码引用 · 长期记忆 · Claim Verification")
     if "evaluation_mode" not in st.session_state:
         st.session_state.evaluation_mode = "B4"
         _sync_mode_flags()
 
-    user_id = settings.runtime.default_user_id
-    session_id = "streamlit"
+    store = _session_store()
+    st.session_state.setdefault("user_id", settings.runtime.default_user_id)
+    st.session_state.setdefault("session_selector", "streamlit")
+    pending = st.session_state.pop("pending_session_id", None)
+    if pending:
+        st.session_state.session_selector = pending
 
     with st.sidebar:
-        st.header("运行设置")
-        st.caption(f"用户：{user_id}")
+        st.header("身份与会话")
+        user_id = st.text_input("用户 ID", key="user_id").strip()
+        try:
+            sessions = store.list_sessions(user_id)
+        except ValueError as exc:
+            st.error(str(exc))
+            st.stop()
+        session_ids = [item["session_id"] for item in sessions]
+        current = st.session_state.session_selector
+        if current not in session_ids:
+            store.create(user_id, current)
+            session_ids.insert(0, current)
+        session_id = st.selectbox("当前会话", session_ids, key="session_selector")
+
+        new_id = st.text_input("新会话 ID", placeholder="留空则自动生成")
+        if st.button("创建会话", use_container_width=True):
+            target = new_id.strip() or _new_session_id()
+            try:
+                store.create(user_id, target)
+                st.session_state.pending_session_id = target
+                st.session_state.loaded_session = None
+                st.rerun()
+            except (ValueError, OSError) as exc:
+                st.error(f"创建失败：{exc}")
+
+        rename_id = st.text_input("重命名当前会话", value=session_id)
+        rename_col, delete_col = st.columns(2)
+        if rename_col.button("重命名", use_container_width=True):
+            try:
+                store.rename(user_id, session_id, rename_id.strip())
+                st.session_state.pending_session_id = rename_id.strip()
+                st.session_state.loaded_session = None
+                st.rerun()
+            except (ValueError, OSError) as exc:
+                st.error(f"重命名失败：{exc}")
+        if delete_col.button("删除", use_container_width=True):
+            store.clear(user_id, session_id)
+            remaining = [item for item in session_ids if item != session_id]
+            target = remaining[0] if remaining else _new_session_id()
+            store.create(user_id, target)
+            st.session_state.pending_session_id = target
+            st.session_state.loaded_session = None
+            st.rerun()
+
         st.caption(f"工作区：共享文档库 · 会话：{session_id}")
+        st.divider()
+        st.header("运行设置")
         runtime = st.radio("运行链路", ["Mock", "Real"], horizontal=True)
         mode = st.selectbox(
             "评测模式",
@@ -200,11 +285,15 @@ def main() -> None:
         )
         st.caption("Real 模式使用 .env 中配置的模型；Mock 模式无需 API 或数据库。")
         if st.button("清空当前会话", use_container_width=True):
+            store.clear(user_id, session_id)
+            store.create(user_id, session_id)
             st.session_state.history = []
+            st.session_state.loaded_session = (user_id, session_id)
             st.rerun()
 
     orch = _get_orchestrator(runtime, top_k)
-    st.session_state.setdefault("history", [])
+    if st.session_state.get("loaded_session") != (user_id, session_id):
+        _restore_history(store, user_id, session_id)
 
     chat_col, info_col = st.columns([2, 1])
     with chat_col:
@@ -241,6 +330,7 @@ def main() -> None:
                         **flags,
                     )
                 st.session_state.history.append({"question": question, "state": state})
+                store.append(state, user_id=user_id, session_id=session_id)
                 st.rerun()
             except Exception as exc:  # noqa: BLE001 - show recoverable UI error
                 st.error(f"运行失败：{type(exc).__name__}: {exc}")

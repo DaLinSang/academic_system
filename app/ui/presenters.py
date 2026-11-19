@@ -56,10 +56,63 @@ def used_citations(state: AgentState) -> list[dict[str, Any]]:
             "file_name": by_index[index].file_name,
             "page_number": by_index[index].page_number,
             "quote": by_index[index].quote,
+            "url": by_index[index].url,
+            "title": by_index[index].title,
+            "is_web": by_index[index].is_web,
+            "locator": by_index[index].locator,
         }
         for index in indices
         if index in by_index
     ]
+
+
+def web_search_summary(state: AgentState) -> tuple[str, str]:
+    """Summarize the web-search decision and execution for the run panel."""
+    events = [event for event in state.trace if event.stage == "web_search"]
+    errors = [event for event in events if event.event == "error"]
+    if errors:
+        detail = str(errors[-1].detail.get("error", "未知错误"))
+        return ("error", f"网页搜索失败：{detail}")
+
+    ends = [event for event in events if event.event == "end"]
+    if ends:
+        detail = ends[-1].detail
+        count = int(detail.get("count", 0) or 0)
+        warning = str(detail.get("warning") or "").strip()
+        if count:
+            suffix = f"；{warning}" if warning else ""
+            return ("success", f"已搜索并取得 {count} 条网页证据{suffix}")
+        if warning:
+            return ("warning", f"网页搜索未取得证据：{warning}")
+        return ("warning", "网页搜索已执行，但没有取得证据。")
+
+    decisions = [event for event in events if event.event == "decision"]
+    if decisions:
+        detail = decisions[-1].detail
+        if bool(detail.get("should_search")):
+            return ("warning", "已决定联网，但未记录搜索执行结果。")
+        reason = str(detail.get("reason") or "本轮无需联网")
+        return ("info", f"未触发网页搜索：{reason}")
+    return ("info", "未触发网页搜索。")
+
+
+def source_status(state: AgentState) -> tuple[str, str, str]:
+    """Return a stable source-status key, UI level, and human-readable label."""
+    if any(item.is_web for item in state.evidence):
+        return ("web", "success", "本轮使用了网页证据。")
+    if state.evidence:
+        return ("document", "success", "本轮使用了上传文档证据。")
+
+    retrieval_events = [
+        event
+        for event in state.trace
+        if event.stage in {"retrieval", "web_search"}
+    ]
+    if state.errors or any(event.event == "error" for event in retrieval_events):
+        return ("retrieval_failed", "error", "本轮检索失败，未取得可用证据。")
+    if state.route and state.route.is_direct:
+        return ("direct", "info", "本轮为 direct 回答，未使用外部证据。")
+    return ("no_evidence", "warning", "本轮执行了检索，但没有找到可用证据。")
 
 
 def memory_write_summary(state: AgentState) -> tuple[str, str]:
@@ -142,6 +195,8 @@ def claim_presentations(state: AgentState) -> list[dict[str, Any]]:
                 "file_name": evidence[chunk_id].file_name,
                 "page_number": evidence[chunk_id].page_number,
                 "locator": evidence[chunk_id].locator,
+                "url": evidence[chunk_id].url,
+                "is_web": evidence[chunk_id].is_web,
             }
             for chunk_id in check.supporting_evidence
             if chunk_id in evidence
