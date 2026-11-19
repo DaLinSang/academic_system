@@ -26,6 +26,7 @@ import traceback
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+from app.agent.web_search_policy import WebSearchPolicy
 from app.core.interfaces import (
     LLM,
     AnswerGenerator,
@@ -100,6 +101,9 @@ class Orchestrator:
         top_k: int = 5,
         enable_replan: bool = True,
         max_replans: int = 1,
+        web_search_tool: object | None = None,
+        web_search_policy: object | None = None,
+        enable_web_search: bool = True,
     ) -> None:
         self.router = router
         self.planner = planner
@@ -114,6 +118,11 @@ class Orchestrator:
         # 而且 RQ4 会把"修复过程"和"正常回答"混在一起统计。
         self.enable_replan = enable_replan
         self.max_replans = max(0, min(max_replans, 2))
+        # 网页搜索是可选工具：没注入时整条链路与以前完全一样。
+        # 决策与执行拆开，便于离线测试（Issue #40 / #41）。
+        self.web_search_tool = web_search_tool
+        self.web_search_policy = web_search_policy or WebSearchPolicy()
+        self.enable_web_search = enable_web_search
 
     # ------------------------------------------------------------------ #
     # 主入口
@@ -165,9 +174,14 @@ class Orchestrator:
                     self._record_retry(state, "planner")
                     state.log("plan", "end", steps=len(state.plan))
 
-        # 4) 工具执行（当前只有检索；web_search 与代码执行留给后续迭代）
+        # 4) 工具执行：用户文档检索
         if route.need_retrieval and state.enable_retrieval:
             self._run_retrieval(state)
+
+        # 4.5) 网页搜索（可选工具）。本地证据不足且确实需要联网时才触发。
+        # 没注入工具时整段跳过，行为与此前完全一致。
+        if self.enable_web_search and self.web_search_tool is not None:
+            self._maybe_web_search(state, route)
 
         # 5) 生成草稿
         with self._stage(state, "generate") as ok:
@@ -262,6 +276,48 @@ class Orchestrator:
         )
         state.route = fallback
         return fallback
+
+    def _maybe_web_search(self, state: AgentState, route: RouteDecision) -> None:
+        """按决策模块决定是否联网，执行结果并入 evidence。
+
+        决策与执行严格分离：`WebSearchPolicy` 不碰网络，`WebSearchTool` 不做判断。
+        这样 RQ1 能单独统计"该搜没搜"和"不该搜却搜了"。
+        """
+        decision = self.web_search_policy.decide(
+            state.question,
+            need_web_search=bool(route.need_web_search),
+            evidence=state.evidence,
+            retrieval_attempted=state.enable_retrieval,
+        )
+        state.log(
+            "web_search",
+            "decision",
+            should_search=decision.should_search,
+            trigger=decision.trigger,
+            reason=decision.reason,
+        )
+        if not decision.should_search:
+            return
+
+        with self._stage(state, "web_search") as ok:
+            if not ok:
+                return
+            try:
+                found = self.web_search_tool.search(decision.query, top_k=self.top_k)
+            except Exception as exc:  # noqa: BLE001 - 工具边界统一兜底
+                state.errors.append(f"web_search: {type(exc).__name__}: {exc}")
+                state.log("web_search", "error", error=str(exc))
+                return
+
+            state.add_evidence(found)
+            warning = getattr(self.web_search_tool, "last_warning", None)
+            state.log(
+                "web_search",
+                "end",
+                count=len(found),
+                total_evidence=len(state.evidence),
+                warning=warning,
+            )
 
     def _run_retrieval(self, state: AgentState) -> None:
         """执行检索工具，并把每次调用记进 `tool_results`。

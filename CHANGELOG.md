@@ -15,6 +15,7 @@
 
 ### Added
 
+- `app/agent/orchestrator.py`：网页搜索接入编排器，本地证据不足且确实需要联网时按需调用（Issue #40/#41）
 - `app/retrieval/web_search.py`：DuckDuckGo 网页搜索工具，结果转网页 Evidence（Issue #41）
 - 测试 `tests/test_contract_web_evidence.py`（13 项）：文档/网页两种证据、locator 兼容、多轮字段向后兼容
 - 测试 `tests/test_memory_preference_signals.py`（24 项）：Issue #31 的偏好识别、短信号误命中、去重与敏感过滤
