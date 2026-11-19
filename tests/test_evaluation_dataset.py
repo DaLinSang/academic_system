@@ -20,6 +20,7 @@ REQUIRED_FIELDS = {
     "expected_memory",
     "tags",
 }
+OPTIONAL_FIELDS = {"gold_need_web"}
 ROUTES = {"direct", "document_retrieval", "complex_task"}
 DEMO_PDFS = {
     "comp7608_lecture_rag.pdf",
@@ -34,9 +35,12 @@ def _samples() -> list[dict]:
 
 def test_annotated_v1_has_unique_complete_samples() -> None:
     samples = _samples()
-    assert len(samples) == 12
+    assert 50 <= len(samples) <= 80
     assert len({sample["id"] for sample in samples}) == len(samples)
-    assert all(set(sample) == REQUIRED_FIELDS for sample in samples)
+    assert all(
+        REQUIRED_FIELDS <= set(sample) <= REQUIRED_FIELDS | OPTIONAL_FIELDS
+        for sample in samples
+    )
     assert all(sample["question"].strip() for sample in samples)
     assert all(sample["gold_route"] in ROUTES for sample in samples)
 
@@ -48,7 +52,8 @@ def test_route_and_retrieval_labels_are_consistent() -> None:
             assert sample["gold_sources"] == []
         else:
             assert sample["gold_need_retrieval"] is True
-            assert sample["gold_sources"]
+            if not sample.get("gold_need_web", False):
+                assert sample["gold_sources"]
 
 
 def test_gold_sources_reference_real_demo_pdf_pages() -> None:
@@ -68,7 +73,19 @@ def test_gold_sources_reference_real_demo_pdf_pages() -> None:
 
 def test_memory_pair_reuses_user_and_advances_turn() -> None:
     memory_samples = [sample for sample in _samples() if "rq2" in sample["tags"]]
-    assert [sample["id"] for sample in memory_samples] == ["m001", "m002"]
-    assert {sample["user_id"] for sample in memory_samples} == {"eval-memory-001"}
-    assert [sample["turn_index"] for sample in memory_samples] == [0, 1]
-    assert memory_samples[0]["expected_memory"] == memory_samples[1]["expected_memory"]
+    by_user = {}
+    for sample in memory_samples:
+        by_user.setdefault(sample["user_id"], []).append(sample)
+    assert by_user
+    for samples in by_user.values():
+        turns = [sample["turn_index"] for sample in samples]
+        assert turns == sorted(turns)
+        assert turns[0] == 0
+        assert any(turn > 0 for turn in turns)
+
+
+def test_web_labels_are_backward_compatible_and_cover_both_classes() -> None:
+    samples = _samples()
+    values = [sample.get("gold_need_web", False) for sample in samples]
+    assert any(values)
+    assert any(not value for value in values)

@@ -22,11 +22,12 @@ REQUIRED_FIELDS = {
     "expected_memory",
     "tags",
 }
+OPTIONAL_FIELDS = {"gold_need_web"}
 
 
 def _validate_sample(sample: dict[str, Any], *, line_number: int) -> None:
     missing = REQUIRED_FIELDS - set(sample)
-    extra = set(sample) - REQUIRED_FIELDS
+    extra = set(sample) - REQUIRED_FIELDS - OPTIONAL_FIELDS
     if missing or extra:
         raise ValueError(
             f"Dataset line {line_number} has invalid fields; "
@@ -42,6 +43,8 @@ def _validate_sample(sample: dict[str, Any], *, line_number: int) -> None:
         )
     if not isinstance(sample["turn_index"], int) or sample["turn_index"] < 0:
         raise ValueError(f"Dataset line {line_number} has an invalid turn_index")
+    if "gold_need_web" in sample and not isinstance(sample["gold_need_web"], bool):
+        raise ValueError(f"Dataset line {line_number} has an invalid gold_need_web")
 
 
 def load_dataset(path: Path = DEFAULT_DATASET) -> list[dict[str, Any]]:
@@ -58,6 +61,7 @@ def load_dataset(path: Path = DEFAULT_DATASET) -> list[dict[str, Any]]:
         if not isinstance(sample, dict):
             raise ValueError(f"Dataset line {line_number} must contain a JSON object")
         _validate_sample(sample, line_number=line_number)
+        sample.setdefault("gold_need_web", False)
         sample_id = sample["id"]
         if sample_id in seen_ids:
             raise ValueError(f"Dataset contains duplicate id {sample_id!r}")

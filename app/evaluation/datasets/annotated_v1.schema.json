@@ -25,6 +25,7 @@
       "enum": ["direct", "document_retrieval", "complex_task"]
     },
     "gold_need_retrieval": {"type": "boolean"},
+    "gold_need_web": {"type": "boolean", "default": false},
     "gold_sources": {
       "type": "array",
       "items": {

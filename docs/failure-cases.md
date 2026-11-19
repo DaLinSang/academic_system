@@ -36,3 +36,29 @@
 - UNVERIFIED claim 单独统计，不进入 claim support rate 分母。
 - SemanticVerifier 的模型调用 token、成本和延迟已归集到 AgentState.usage，并进入 RQ4。
 - T06/T07 改变 claim 分母与引用展示，正式结果需要重新运行，不能与修复前数据混用。
+
+## FC-005 RQ4 latency 重复累计
+
+- 发现方式：2026-11-19 Real B4 smoke，单样本实际墙钟约 55 秒，但
+  `AgentState.usage.latency_ms` 约 111 秒。
+- 根因：组件 LLM latency（包含 retry 等待）与整条 pipeline 墙钟再次相加。
+- C 侧处理：RQ4 改为读取 pipeline start/end trace timestamp；组件耗时只用于
+  trace 诊断，不再作为总延迟再次累计。
+
+## FC-006 小模型生成格式污染事实 claim
+
+- 环境：本地 Ollama `llama3.2:1b`，Real B4 单样本 q001。
+- 现象：答案重复“来源编号 / 规则编号 / 提问”等提示结构；Verifier 将
+  “来源：rag_paper.pdf 第 1 页”这类元信息拆成 supported claim。
+- 影响：检索命中正确，但答案质量、claim 分母和 token 数不能代表正式模型。
+- 结论：本地 1B 模型只用于 Real 链路 smoke，不作为正式 B1-B4 研究结果；
+  正式 4x3 实验应使用团队冻结的聊天模型配置。
+
+## 2026-11-19 实验状态
+
+- 50 条数据集的 Mock 4x3 已生成 12 个 run，meta 五项上下文与 metrics 完整，
+  用于验证 runner、对齐、聚合和输出结构。
+- Real B4 q001 已跑通：pgvector、Ollama embedding、PDF 索引、Router、Retriever、
+  AnswerGenerator 和 SemanticVerifier 均实际执行。
+- 完整 Real 4x3 未用本地 1B 模型冒充正式结果；团队聊天模型 key 冻结后可直接
+  使用 `--real --repeats 3` 生成最终表格。
