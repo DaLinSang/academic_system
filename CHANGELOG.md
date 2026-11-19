@@ -16,6 +16,7 @@
 ### Added
 
 - 测试 `tests/test_contract_web_evidence.py`（13 项）：文档/网页两种证据、locator 兼容、多轮字段向后兼容
+- 测试 `tests/test_memory_preference_signals.py`（24 项）：Issue #31 的偏好识别、短信号误命中、去重与敏感过滤
 - 测试 `tests/test_router_robustness.py`（21 项）：英文文档路由降级、大小写不敏感、
   泛化英文问句不误检索、`need_memory` 解析与语义
 - **实验运行记录器**（`app/agent/run_logger.py`）
@@ -83,6 +84,9 @@
 ### Changed
 
 - **契约扩展**（Issue #39）：`Evidence` 新增 `url` / `title` / `is_web`，`RetrievalMethod` 新增 `WEB`，`AgentState` 新增 `history`
+- `app/memory/manager.py`：预筛信号扩展「以后回答 / 每次回答 / 回答时请 / 从现在起」等稳定偏好表达（Issue #31）
+- `app/memory/manager.py`：短信号（"我是"/"记住"）改为只在句首或标点后匹配，修复"告诉我是自己查的"误命中
+- `app/memory/manager.py`：few-shot 明确"对未来回答方式的要求"属于 preference，即使句子形如指令
 - `app/routing/router.py`：降级关键词加入英文（Issue #25）。此前只认中文，B 的英文 PDF 在无 key 时全部被误判为 direct
 - `app/routing/router.py`：降级匹配改为 `casefold()`，英文大小写不敏感
 - `app/routing/router.py`：系统提示词补充英文文档问题的判断规则，`need_memory` 语义改为「已有记忆是否有帮助」，并明确读取开关是 `enable_memory`- `app/agent/orchestrator.py`：检索阶段现在把每次调用记进 `tool_results`（此前 `record_tool()` 从未被调用，该字段恒为空）

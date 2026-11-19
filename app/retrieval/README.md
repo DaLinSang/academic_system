@@ -200,11 +200,15 @@ uv run python scripts/check_env.py
 | `top_k <= 0` | 返回 `[]` |
 | 没有命中 | 返回 `[]` |
 | PDF 解析失败 | 抛出 `IngestionError` |
-| Ollama 不可用 | 转换为 `RetrievalError` |
+| 查询时 Ollama / 向量检索不可用 | 若 BM25 已载入，返回 BM25 结果；`last_warning` 说明降级原因 |
+| 索引时 Ollama 不可用 | 抛出 `RetrievalError`；不提交不完整的索引 |
+| PDF 全部没有可搜索文字 | 抛出 `IngestionError`，提示先启用 OCR；不会覆盖旧索引 |
 | PostgreSQL 不可用 | 转换为 `RetrievalError` |
 | 重复导入 | 按 `chunk_id` 更新 |
 
 跨模块边界不会暴露 `psycopg` 或 `httpx` 的底层异常。
+
+查询降级只发生在 BM25 语料已从 PostgreSQL 加载后。若数据库本身不可连接，检索仍会抛出错误。BM25 候选是关键词匹配，跨语言查询质量通常低于正常的向量检索；调用方可以读取 `retriever.last_warning` 提醒用户“本轮仅用了关键词检索”。成功查询会将此字段清空。公共 `Retriever` 接口和 `Evidence` 数据结构未更改。
 
 ## 9. 测试
 

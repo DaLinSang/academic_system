@@ -10,7 +10,7 @@ import psycopg
 from pgvector.psycopg import register_vector
 
 from app.core.config import settings
-from app.core.errors import RetrievalError
+from app.core.errors import IngestionError, RetrievalError
 from app.core.types import DocumentChunk, Evidence, RetrievalMethod
 from app.ingestion.pdf_parser import parse_pdf
 from app.retrieval.bm25_retriever import BM25Retriever, _tokenize
@@ -76,6 +76,7 @@ class HybridRetriever:
         self.vector_weight = vector_weight
         self._bm25 = BM25Retriever()
         self._bm25_loaded = False
+        self.last_warning: str | None = None
 
     def _ensure_schema(self, conn: psycopg.Connection) -> None:
         schema_path = Path(__file__).with_name("schema.sql")
@@ -132,6 +133,11 @@ class HybridRetriever:
     ) -> int:
         """Parse, embed, and upsert one PDF into the vector index."""
         chunks = parse_pdf(pdf_path, document_id=document_id)
+        if not chunks:
+            raise IngestionError(
+                "No searchable text found in PDF. For scanned pages, install "
+                "pdftoppm and tesseract, then re-index the document."
+            )
         resolved_document_id = document_id or Path(pdf_path).stem
 
         try:
@@ -207,15 +213,20 @@ class HybridRetriever:
 
     def retrieve(self, query: str, top_k: int = 5) -> list[Evidence]:
         """Return BM25 and vector results fused with reciprocal rank fusion."""
+        self.last_warning = None
         if top_k <= 0 or not _tokenize(query):
             return []
 
         self._load_bm25_index()
         bm25_results = self._bm25.retrieve(query, top_k=max(top_k * 4, 20))
-        vector_results = self._vector_results(
-            self.embedder.embed(query),
-            limit=max(top_k * 4, 20),
-        )
+        try:
+            vector_results = self._vector_results(
+                self.embedder.embed(query),
+                limit=max(top_k * 4, 20),
+            )
+        except RetrievalError as exc:
+            self.last_warning = f"Vector retrieval unavailable; using BM25 only: {exc}"
+            return bm25_results[:top_k]
 
         evidence_by_id: dict[str, Evidence] = {
             result.chunk_id: result for result in bm25_results

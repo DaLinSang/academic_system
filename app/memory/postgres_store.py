@@ -152,10 +152,20 @@ class PostgresMemoryStore:
     ) -> list[MemoryItem]:
         if top_k <= 0 or not query.strip() or tiers == []:
             return []
-        vector = self.embedder.embed(query)
         tier_values = [tier.value for tier in tiers] if tiers else None
         try:
             with self._connect() as conn:
+                exists = conn.execute(
+                    """SELECT EXISTS (
+                        SELECT 1 FROM memories
+                        WHERE user_id = %s
+                          AND (%s::text[] IS NULL OR tier = ANY(%s::text[]))
+                    )""",
+                    (user_id, tier_values, tier_values),
+                ).fetchone()[0]
+                if not exists:
+                    return []
+                vector = self.embedder.embed(query)
                 rows = conn.execute(
                     """
                     WITH scored AS (
