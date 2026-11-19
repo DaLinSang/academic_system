@@ -94,6 +94,7 @@
 
 ### Changed
 
+- `app/retrieval/web_search.py`：DuckDuckGo 不可达时自动降级到 Bing；默认超时 10s→5s；解析器同时支持两家 HTML 结构。修复部分网络下联网搜索一直 timeout 的问题
 - `app/agent/README.md`：补 SessionStore 章节与 SessionStore/RunLogger 边界、turn_index 连续规则、不做 workspace 的决策；修正过期的'多轮未接入/web_search 未接入'描述（Issue #32 A 部分）
 - `Orchestrator.run()` 新增可选 `history` 参数；Router/Planner Protocol 增加可选 `history`（Issue #44，向后兼容）
 - `app/agent/answer_generator.py`：direct / grounded 两条路径注入历史对话，供模型消解『它/这个』指代

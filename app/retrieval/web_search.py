@@ -1,19 +1,21 @@
 """网页搜索工具（Issue #41，A 负责）。
 
-用 DuckDuckGo HTML 端点，不需要搜索 API key。抓取结果页后用标准库
-`HTMLParser` 抽正文，不引第三方解析依赖（本环境没有 bs4/lxml）。
+不需要搜索 API key：先用 DuckDuckGo HTML 端点，不可达时自动降级到 Bing HTML。
+抓取结果页后用标准库 `HTMLParser` 抽正文，不引第三方解析依赖（本环境没有 bs4/lxml）。
 
 设计约束
 --------
 * 与 `Retriever` 同风格：`search(query, top_k) -> list[Evidence]`，失败返回空并写 `last_warning`；
-* 可注入 `httpx.Client`——沙箱访问不了外网，测试用 `MockTransport` 提供假 HTML；
+* 可注入 `httpx.Client`——测试用 `MockTransport` 提供假 HTML；
 * 网页证据走 `RetrievalMethod.WEB`，`page_number=0`，定位靠 `url` + `title`；
 * 不把 API key、请求头或 cookie 写进 Evidence / trace。
 
 局限
 ----
-DuckDuckGo 的 HTML 结构会变，解析器是"尽力而为"；对 JS 渲染页面无能为力。
-这属于研究原型的边界，不能拿来当生产级搜索引擎用。
+两家引擎的 HTML 结构都会变，解析器是"尽力而为"；对 JS 渲染页面无能为力。
+部分网络（如中国大陆出口）DuckDuckGo 完全不可达，此时每次搜索先等 5s 超时再走 Bing；
+Bing 在某些区域会对纯英文查询做词典式改写，导致学术查询命中词典页，
+含中文的查询通常正常。这属于研究原型的边界，不能当生产级搜索引擎用。
 """
 
 from __future__ import annotations
@@ -31,6 +33,10 @@ from app.core.types import Evidence, RetrievalMethod
 __all__ = ["WebSearchTool", "WebResult"]
 
 _DDG_ENDPOINT = "https://html.duckduckgo.com/html/"
+_BING_ENDPOINT = "https://www.bing.com/search"
+# 后端优先级：DDG 不需要 key、隐私更好；但部分网络（如中国大陆）不可达，
+# 超时后自动降级到 Bing。两者都不需要 API key（Issue #41）。
+_SEARCH_BACKENDS = (_DDG_ENDPOINT, _BING_ENDPOINT)
 _MAX_PAGE_CHARS = 4000
 _MAX_PAGE_BYTES = 2_000_000
 _ALLOWED_CONTENT_TYPES = ("text/html", "application/xhtml+xml", "text/plain")
@@ -71,25 +77,52 @@ class WebResult:
         self.snippet = snippet.strip()
 
 
-class _DDGResultParser(HTMLParser):
-    """从 DuckDuckGo 结果页抽标题/链接/摘要。"""
+class _SearchResultParser(HTMLParser):
+    """从搜索结果页抽标题/链接/摘要，同时支持 DuckDuckGo 与 Bing 的 HTML 结构。
 
-    def __init__(self) -> None:
+    DDG: ``a.result__a`` 标题链接 + ``a.result__snippet`` 摘要。
+    Bing: ``li.b_algo`` 容器内 ``h2 > a`` 标题链接 + ``.b_caption p`` 摘要。
+    两种结构互不干扰，按 backend 参数选择解析规则。
+    """
+
+    def __init__(self, backend: str = "ddg") -> None:
         super().__init__()
+        self.backend = backend
         self.results: list[WebResult] = []
         self._capture: str | None = None
         self._title = ""
         self._url = ""
         self._snippet = ""
+        self._in_bing_algo = False
+        self._in_bing_h2 = False
+        self._in_bing_caption = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attrs)
         classes = (attributes.get("class") or "").split()
-        if tag == "a" and "result__a" in classes:
+        if self.backend == "ddg":
+            if tag == "a" and "result__a" in classes:
+                self._capture = "link"
+                self._title = ""
+                self._url = attributes.get("href") or ""
+            elif "result__snippet" in classes:
+                self._capture = "snippet"
+                self._snippet = ""
+            return
+
+        # Bing：li.b_algo 标记一条结果，h2 内的第一个 a 是标题链接
+        if tag == "li" and "b_algo" in classes:
+            self._in_bing_algo = True
+            self._url = ""
+        if self._in_bing_algo and tag == "h2":
+            self._in_bing_h2 = True
+        if self._in_bing_h2 and tag == "a" and self._capture is None:
             self._capture = "link"
             self._title = ""
             self._url = attributes.get("href") or ""
-        elif "result__snippet" in classes:
+        if self._in_bing_algo and tag == "div" and "b_caption" in classes:
+            self._in_bing_caption = True
+        if self._in_bing_caption and tag == "p" and self._capture is None:
             self._capture = "snippet"
             self._snippet = ""
 
@@ -100,14 +133,32 @@ class _DDGResultParser(HTMLParser):
             self._snippet += data
 
     def handle_endtag(self, tag: str) -> None:
+        if self.backend == "ddg":
+            if self._capture == "link" and tag == "a":
+                if self._title and self._url:
+                    self.results.append(WebResult(self._title, self._normalise_url(self._url)))
+                self._capture = None
+            elif self._capture == "snippet" and tag in ("a", "div"):
+                if self.results and self._snippet:
+                    self.results[-1].snippet = self._snippet
+                self._capture = None
+            return
+
         if self._capture == "link" and tag == "a":
             if self._title and self._url:
-                self.results.append(WebResult(self._title, self._normalise_url(self._url)))
+                self.results.append(WebResult(self._title, self._url))
             self._capture = None
-        elif self._capture == "snippet" and tag in ("a", "div"):
+            self._in_bing_h2 = False
+            self._url = ""
+        elif self._capture == "snippet" and tag == "p":
             if self.results and self._snippet:
                 self.results[-1].snippet = self._snippet
             self._capture = None
+            self._in_bing_caption = False
+        elif tag == "li":
+            self._in_bing_algo = False
+            self._in_bing_h2 = False
+            self._in_bing_caption = False
 
     @staticmethod
     def _normalise_url(href: str) -> str:
@@ -160,7 +211,9 @@ class WebSearchTool:
         self,
         *,
         client: httpx.Client | None = None,
-        timeout: float = 10.0,
+        # 5s：DDG 不可达时快速失败并切到 Bing；可达时足够返回。
+        # 需要通过构造参数覆盖时传 timeout= 即可。
+        timeout: float = 5.0,
         fetch_pages: bool = True,
         max_page_chars: int = _MAX_PAGE_CHARS,
     ) -> None:
@@ -177,20 +230,31 @@ class WebSearchTool:
         if top_k <= 0 or not query.strip():
             return []
 
-        try:
-            _assert_safe_url(_DDG_ENDPOINT)
-            response = self._client.get(_DDG_ENDPOINT, params={"q": query})
-            _assert_safe_url(str(response.url))  # 检查重定向后的最终地址
-            response.raise_for_status()
-            parser = _DDGResultParser()
-            parser.feed(response.text)
-            results = parser.results[:top_k]
-        except Exception as exc:  # noqa: BLE001 - 网络异常类型太多
-            self.last_warning = f"网页搜索不可用：{type(exc).__name__}: {exc}"
-            return []
+        results: list[WebResult] = []
+        failures: list[str] = []
+        for endpoint in _SEARCH_BACKENDS:
+            backend = "ddg" if "duckduckgo" in endpoint else "bing"
+            try:
+                _assert_safe_url(endpoint)
+                # Bing 指定英文界面，避免中文区域词污染学术查询
+                params = {"q": query}
+                if backend == "bing":
+                    params["setlang"] = "en-US"
+                response = self._client.get(endpoint, params=params)
+                _assert_safe_url(str(response.url))  # 检查重定向后的最终地址
+                response.raise_for_status()
+                parser = _SearchResultParser(backend=backend)
+                parser.feed(response.text)
+                results = parser.results[:top_k]
+            except Exception as exc:  # noqa: BLE001 - 网络异常类型太多
+                failures.append(f"{backend}: {type(exc).__name__}")
+                continue
+            if results:
+                break
+            failures.append(f"{backend}: 未返回结果")
 
         if not results:
-            self.last_warning = "网页搜索未返回结果"
+            self.last_warning = "网页搜索不可用：" + "; ".join(failures)
             return []
 
         return [self._to_evidence(index, item) for index, item in enumerate(results, start=1)]
