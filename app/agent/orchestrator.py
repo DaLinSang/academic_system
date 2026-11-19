@@ -345,7 +345,13 @@ class Orchestrator:
         失败案例分析拿不到任何工具级数据。
         """
         planned = [s for s in state.plan if s.tool == "retrieval" and s.query]
-        jobs: list = [(s, s.query) for s in planned] if planned else [(None, state.question)]
+        query = state.question
+        # Resolve short follow-ups using user questions only, never generated claims.
+        if state.history and any(word in query.casefold() for word in
+                                 ("它", "刚才", "上述", "这个方法", "that method", "its ", "it ")):
+            context = " ".join(turn.question[:300] for turn in state.history[-2:])
+            query = f"{context}\n当前问题：{query}"
+        jobs: list = [(s, s.query) for s in planned] if planned else [(None, query)]
 
         with self._stage(state, "retrieval") as ok:
             if not ok:
@@ -360,7 +366,9 @@ class Orchestrator:
                 started = time.perf_counter()
                 step_id = step.step_id if step is not None else None
                 try:
-                    found = self.retriever.retrieve(query, top_k=self.top_k)
+                    overview = any(word in query.casefold() for word in
+                                   ("总结", "概括", "主要结论", "summar", "overview"))
+                    found = self.retriever.retrieve(query, top_k=max(self.top_k, 6) if overview else self.top_k)
                 except Exception as exc:  # noqa: BLE001 - 跨模块边界统一兜底
                     latency = round((time.perf_counter() - started) * 1000, 2)
                     message = f"{type(exc).__name__}: {exc}"

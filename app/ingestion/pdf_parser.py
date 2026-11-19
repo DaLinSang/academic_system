@@ -48,7 +48,13 @@ def _ocr_page(pdf_path: Path, page_number: int, *, required: bool) -> str:
             )
             return result.stdout.replace("\x00", "")
     except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-        raise IngestionError(f"OCR failed on page {page_number} of {pdf_path}") from exc
+        detail = getattr(exc, "stderr", "") or str(exc)
+        if isinstance(detail, bytes):
+            detail = detail.decode("utf-8", errors="replace")
+        raise IngestionError(
+            f"OCR failed on page {page_number} of {pdf_path.name}: {detail[:500]}. "
+            "Check tesseract --list-langs and PDF_OCR_LANG; install poppler and tesseract."
+        ) from exc
 
 
 def split_text(
