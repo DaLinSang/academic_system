@@ -24,9 +24,9 @@ uv run pytest -q 全量通过；uv run ruff check . 通过；git diff --check �
 
 真实PostgreSQL/Ollama检索rag_paper.pdf，返回第1、2、5、3、12、9页，且没有其他文件。此为检索验证，不是最终LLM回答质量或正式实验结果。
 
-## 尚待验收，暂为 Draft
+## OCR 端到端验收
 
-本机macOS14 Homebrew正在源码编译OCR依赖，尚未完成扫描PDF的真实识别→索引→引用链路。必须安装完成后按 docs/b-ocr-coverage-test-2026-11-19.md 复验，才能将PR标记ready。不能宣称OCR端到端通过。
+本机已具备 pdftoppm 与 tesseract 5.5.4，扫描件 HKU_TEC_x_Plug_and_Play.pdf 经 OCR 得到第1页文字、入库1个chunk；真实 HKU DeepSeek-V3.2 问答引用 p.1，日期、时间、地点三条 Claim 均为 supported，无错误。详细命令与结果见 docs/b-ocr-coverage-test-2026-11-19.md。英文扫描页已验收，中文OCR语言包和复杂版式未覆盖。
 
 ## 给 reviewer
 

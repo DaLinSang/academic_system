@@ -23,17 +23,25 @@
 
 ## OCR 环境状态与复验
 
-代码已有自动 OCR：空文字页 → pdftoppm 渲染 → Tesseract → 页内分块 → embedding → PostgreSQL。此机器开始安装 brew install poppler tesseract；macOS14 需要源码编译，记录时尚无 tesseract 可执行文件，因此扫描件端到端验收尚未完成。
+代码已有自动 OCR：空文字页 → pdftoppm 渲染 → Tesseract → 页内分块 → embedding → PostgreSQL。本机 Homebrew 已安装 tesseract 5.5.4；pdftoppm 可执行。`tesseract --list-langs` 当前含 eng、osd。OCR 扫描件端到端验收已完成；中文扫描件仍需对应语言包。
 
 安装完成后执行：
 
 ```bash
 which pdftoppm tesseract
 tesseract --list-langs
-uv run python -c 'from app.ingestion import parse_pdf; c=parse_pdf("/Users/lelezi/Desktop/HKU TEC x Plug and Play.pdf"); print([(x.page_number, x.text[:120]) for x in c])'
+uv run python -c 'from app.ingestion import parse_pdf; c=parse_pdf("data/raw/HKU_TEC_x_Plug_and_Play.pdf"); print([(x.page_number, x.text[:120]) for x in c])'
 ```
 
-然后在 UI 重新保存并导入这份 PDF，确认返回 chunk 数量，询问“HKU_TEC_x_Plug_and_Play.pdf 中活动的主题是什么？引用原文和页码”，对照原页人工核验。中文需要已安装 chi_sim/chi_tra；PDF_OCR_LANG 只能填已安装语言。OCR 不保证复杂图表、公式或手写文字准确。
+真实检索路径已完成验证；UI 仍可按同样步骤复验。确认返回 chunk 数量，询问“HKU_TEC_x_Plug_and_Play.pdf 中活动的主题是什么？引用原文和页码”，对照原页人工核验。中文需要已安装 chi_sim/chi_tra；PDF_OCR_LANG 只能填已安装语言。OCR 不保证复杂图表、公式或手写文字准确。
+
+## 真实 OCR → 索引 → 引用结果
+
+执行 `parse_pdf("data/raw/HKU_TEC_x_Plug_and_Play.pdf")` 得到 1 条 chunk，page_number=1，OCR 文本含 `LECTURE 6`、`19 NOV 2026`、`18:30 — 20:00`、`Rayson Huang Theatre`。使用 HybridRetriever.index_document 同文件得到 1 条入库 chunk；retrieve 返回同文件第1页（vector）。
+
+随后在已配置 HKU DeepSeek-V3.2 的真实 B4 链路提问“请根据 HKU_TEC_x_Plug_and_Play.pdf 回答 LECTURE 6 的日期、时间和地点，并引用页码。”Router 选 document_retrieval，回答给出 2026年11月19日星期四、18:30至20:00、Rayson Huang Theatre，三处均标 [1]；引用显示 HKU_TEC_x_Plug_and_Play.pdf p.1；Verifier 三条 supported；无错误。OCR 将图片文字识别为可检索原文后，后续流程与普通 PDF 相同。
+
+OCR 也把页眉误识为 `EAI icadomy aa`，说明扫描页仍可能有错字；本例仅核验日期、时间、地点。该运行是单例端到端检查，不能代替课程正式评价指标。
 
 ## A/C 集成与边界
 
