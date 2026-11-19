@@ -101,10 +101,17 @@ class MemoryStore(Protocol):
     ) -> list[MemoryItem]:
         ...
 
-    def update(self, memory_id: str, content: str | None = None, importance: float | None = None) -> MemoryItem | None:
+    def update(
+        self,
+        memory_id: str,
+        content: str | None = None,
+        importance: float | None = None,
+        *,
+        user_id: str = "default",
+    ) -> MemoryItem | None:
         ...
 
-    def delete(self, memory_id: str) -> bool:
+    def delete(self, memory_id: str, *, user_id: str = "default") -> bool:
         ...
 
     def list_all(self, user_id: str = "default") -> list[MemoryItem]:

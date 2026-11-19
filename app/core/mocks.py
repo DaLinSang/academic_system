@@ -325,9 +325,11 @@ class MockMemoryStore:
         memory_id: str,
         content: str | None = None,
         importance: float | None = None,
+        *,
+        user_id: str = "default",
     ) -> MemoryItem | None:
         item = self._items.get(memory_id)
-        if item is None:
+        if item is None or item.user_id != user_id:
             return None
         if content is not None:
             item.content = content
@@ -336,8 +338,12 @@ class MockMemoryStore:
         item.updated_at = utcnow()
         return item
 
-    def delete(self, memory_id: str) -> bool:
-        return self._items.pop(memory_id, None) is not None
+    def delete(self, memory_id: str, *, user_id: str = "default") -> bool:
+        item = self._items.get(memory_id)
+        if item is None or item.user_id != user_id:
+            return False
+        del self._items[memory_id]
+        return True
 
     def list_all(self, user_id: str = "default") -> list[MemoryItem]:
         return [m for m in self._items.values() if m.user_id == user_id]
