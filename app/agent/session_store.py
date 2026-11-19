@@ -90,6 +90,13 @@ class SessionStore:
         session = _safe_id(session_id, "session_id")
         return self.base_dir / user / f"{session}.jsonl"
 
+    def create(self, user_id: str, session_id: str) -> Path:
+        """Create an empty persistent session if it does not already exist."""
+        path = self._path(user_id, session_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch(exist_ok=True)
+        return path
+
     # ------------------------------------------------------------------ #
     def append(
         self,
@@ -175,18 +182,29 @@ class SessionStore:
         summaries: list[SessionSummary] = []
         for path in user_dir.glob("*.jsonl"):
             lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-            if not lines:
-                continue
-            last = json.loads(lines[-1])
+            last = json.loads(lines[-1]) if lines else {}
             summaries.append(
                 SessionSummary(
                     session_id=path.stem,
                     turn_count=len(lines),
-                    last_at=last.get("saved_at"),
+                    last_at=last.get("saved_at") or datetime.fromtimestamp(
+                        path.stat().st_mtime, tz=UTC
+                    ).isoformat(),
                     last_question=last.get("question", "")[:60],
                 )
             )
         return sorted(summaries, key=lambda s: s.get("last_at") or "", reverse=True)
+
+    def rename(self, user_id: str, session_id: str, new_session_id: str) -> Path:
+        """Rename one session without changing its stored turns."""
+        source = self._path(user_id, session_id)
+        destination = self._path(user_id, new_session_id)
+        if not source.is_file():
+            raise FileNotFoundError(f"会话不存在: {session_id}")
+        if destination.exists():
+            raise FileExistsError(f"会话已存在: {new_session_id}")
+        source.rename(destination)
+        return destination
 
     # ------------------------------------------------------------------ #
     def clear(self, user_id: str, session_id: str) -> bool:

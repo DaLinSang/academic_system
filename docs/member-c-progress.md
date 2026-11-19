@@ -1,10 +1,10 @@
 # Member C Progress
 
-更新日期：2026-11-17
+更新日期：2026-11-19
 
-当前开发分支：`feat/c-evaluation-data-v1`
+当前开发分支：`feat/c-ui-web-sessions`
 
-基线提交：`origin/main@546f75e`（已包含 C 进度 PR #26、A Router PR #27 与三份 Demo PDF）
+基线提交：`origin/main@0b56252`（已包含 Web Search、SessionStore 与多轮上下文）
 
 ## 任务边界
 
@@ -20,6 +20,17 @@
 embedding、数据库或记忆存储。
 
 ## 已完成
+
+### Web 来源与会话 UI（Issue #42 / #46）
+
+- 文档引用继续显示文件名与页码，网页引用显示标题/域名并可点击
+- Claim Verification 的 supporting evidence 可定位到网页 URL
+- 运行信息显示网页搜索未触发、成功条数、无结果或失败原因
+- 来源状态区分上传文档、网页、direct、检索无证据和检索失败
+- 侧栏支持 user_id 与会话列表，并可创建、切换、重命名和删除会话
+- 页面刷新或服务重启后通过 SessionStore.restore 恢复完整 AgentState
+- “清空当前会话”仅清除当前 JSONL，不修改长期记忆或 PDF
+- 已补纯 presenter、SessionStore 与多轮集成测试
 
 ### Claim Verification V1
 

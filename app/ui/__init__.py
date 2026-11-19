@@ -5,8 +5,10 @@ from app.ui.presenters import (
     memory_write_summary,
     pdf_page_count,
     safe_pdf_name,
+    source_status,
     used_citations,
     verification_notice,
+    web_search_summary,
 )
 
 __all__ = [
@@ -14,6 +16,8 @@ __all__ = [
     "memory_write_summary",
     "pdf_page_count",
     "safe_pdf_name",
+    "source_status",
     "used_citations",
     "verification_notice",
+    "web_search_summary",
 ]

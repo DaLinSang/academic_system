@@ -54,6 +54,15 @@ def test_load_missing_session_returns_empty(tmp_path):
     assert SessionStore(tmp_path).load("u1", "not-exist") == []
 
 
+def test_create_keeps_empty_session_visible(tmp_path):
+    store = SessionStore(tmp_path)
+    path = store.create("u1", "new-chat")
+
+    assert path.is_file()
+    assert store.list_sessions("u1")[0]["session_id"] == "new-chat"
+    assert store.list_sessions("u1")[0]["turn_count"] == 0
+
+
 def test_record_contains_report_fields(tmp_path):
     store = SessionStore(tmp_path)
     store.append(make_state("什么是 RAG？", answer="RAG 是检索增强生成 [1]。"))
@@ -110,6 +119,19 @@ def test_clear_only_removes_one_session(tmp_path):
     assert store.load("u1", "s1") == []
     assert len(store.load("u1", "s2")) == 1
     assert store.clear("u1", "s1") is False, "重复删除返回 False"
+
+
+def test_rename_preserves_turns_and_rejects_collision(tmp_path):
+    store = SessionStore(tmp_path)
+    store.append(make_state("保留的问题"))
+    store.create("u1", "occupied")
+
+    destination = store.rename("u1", "s1", "renamed")
+    assert destination.name == "renamed.jsonl"
+    assert store.load("u1", "s1") == []
+    assert store.load("u1", "renamed")[0]["question"] == "保留的问题"
+    with pytest.raises(FileExistsError):
+        store.rename("u1", "renamed", "occupied")
 
 
 # --------------------------------------------------------------------------- #
