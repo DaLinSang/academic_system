@@ -40,6 +40,7 @@ from app.core.interfaces import (
 from app.core.types import (
     AgentState,
     ClaimStatus,
+    ConversationTurn,
     RouteDecision,
     RouteType,
     StepStatus,
@@ -134,6 +135,7 @@ class Orchestrator:
         session_id: str = "default",
         user_id: str = "default",
         turn_index: int = 0,
+        history: list[ConversationTurn] | None = None,
         enable_routing: bool = True,
         enable_retrieval: bool = True,
         enable_memory: bool = True,
@@ -144,6 +146,7 @@ class Orchestrator:
             session_id=session_id,
             user_id=user_id,
             turn_index=turn_index,
+            history=list(history) if history else [],
             enable_routing=enable_routing,
             enable_retrieval=enable_retrieval,
             enable_memory=enable_memory,
@@ -169,7 +172,9 @@ class Orchestrator:
         if route.need_planning:
             with self._stage(state, "plan") as ok:
                 if ok:
-                    state.plan = self.planner.plan(question, route, state.memory_context)
+                    state.plan = self.planner.plan(
+                        question, route, state.memory_context, **self._history_kw(state)
+                    )
                     self._absorb_usage(state, self.planner)
                     self._record_retry(state, "planner")
                     state.log("plan", "end", steps=len(state.plan))
@@ -230,6 +235,15 @@ class Orchestrator:
     # ------------------------------------------------------------------ #
     # 各阶段
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _history_kw(state: AgentState) -> dict[str, list[ConversationTurn]]:
+        """仅当存在历史时才传 history 关键字（Issue #44）。
+
+        历史为空时返回空 dict，调用签名与扩展前完全一致——这样测试里那些
+        自定义 Router/Planner（未声明 history 参数）仍能照常工作，向后兼容。
+        """
+        return {"history": state.history} if state.history else {}
+
     def _decide_route(self, state: AgentState, enable_routing: bool) -> RouteDecision:
         """路由；关闭路由时按 enable_retrieval 退化为 B1 或 B2。"""
         if not enable_routing:
@@ -261,6 +275,7 @@ class Orchestrator:
                     state.question,
                     has_documents=True,
                     memory_context=state.memory_context,
+                    **self._history_kw(state),
                 )
                 self._absorb_usage(state, self.router)
                 self._record_retry(state, "router")
@@ -488,7 +503,9 @@ class Orchestrator:
             if not ok:
                 return budget
             try:
-                new_plan = self.planner.plan(retry_question, route, state.memory_context)
+                new_plan = self.planner.plan(
+                    retry_question, route, state.memory_context, **self._history_kw(state)
+                )
             except Exception as exc:  # noqa: BLE001 - 重规划失败不能毁掉已有回答
                 state.errors.append(f"replan: {type(exc).__name__}: {exc}")
                 state.log("replan", "error", error=str(exc))

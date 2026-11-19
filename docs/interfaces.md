@@ -205,9 +205,15 @@ print(resp.text, resp.usage.total_tokens)
 ### Router / Planner
 
 ```python
-router.route(question, has_documents=True, memory_context=None) -> RouteDecision
-planner.plan(question, route, memory_context=None) -> list[PlanStep]
+router.route(question, has_documents=True, memory_context=None, history=None) -> RouteDecision
+planner.plan(question, route, memory_context=None, history=None) -> list[PlanStep]
 ```
+
+`history: list[ConversationTurn] | None` 是 Issue #44 的可选扩展：
+- 只在 `Orchestrator.run(history=...)` 非空时传入；为空时调用签名与扩展前完全一致；
+- LLMRouter / LLMPlanner 把它格式化进 prompt（有字符预算，最近 5 轮）；
+- 规则路由 / Mock 刻意忽略，避免历史里的关键词污染当前轮分类；
+- `ConversationTurn` 只含 question / answer / turn_index，不含完整 AgentState。
 
 `Planner` **只生成步骤，不执行工具**。执行由 Orchestrator 负责。
 

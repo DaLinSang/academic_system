@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import re
 
+from app.agent.history_context import format_history
 from app.core.interfaces import LLM
 from app.core.types import AgentState
 
@@ -55,7 +56,10 @@ _SYSTEM_PROMPT = """你是学术知识助手。根据给定的证据回答用户
 3. 如果证据不足以回答问题，明确说明"现有资料不足以回答"，并指出缺少什么信息。
 4. 如果多个证据互相矛盾，分别陈述各自的说法并指出矛盾，不要合并成一个确定结论。
 5. 用中文回答，结构清晰。不要复述这些规则，不要输出"根据规则"之类的话。
-6. 不要在开头写"根据检索到的文档"这类引导语，直接给结论。"""
+6. 不要在开头写"根据检索到的文档"这类引导语，直接给结论。
+7. 若提供了历史对话，其中的"它/这个/前者"等指代**必须**从历史对话中解析出具体对象，
+   再带着这个对象去理解用户问题；历史只用于消解指代，不是事实来源，事实仍只能取自证据。
+   不要把指代词拿去证据里猜——即使证据里有多个候选对象也先查历史。"""
 
 _DIRECT_SYSTEM_PROMPT = """你是学术知识助手。用户的问题不需要检索其个人文档，请直接回答。
 
@@ -63,7 +67,8 @@ _DIRECT_SYSTEM_PROMPT = """你是学术知识助手。用户的问题不需要�
 1. 用中文回答，结构清晰。
 2. 如果问题涉及你不确定的事实，明确说明不确定性，不要编造。
 3. 如果这个问题其实需要用户自己的文档才能回答，在回答末尾提示用户上传相关材料。
-4. 不要在开头写引导语，直接给结论。"""
+4. 不要在开头写引导语，直接给结论。
+5. 若提供了历史对话，"它/这个"等指代必须从历史中解析出具体对象后再回答。"""
 
 
 def extract_citation_indices(text: str) -> list[int]:
@@ -173,15 +178,24 @@ class LLMAnswerGenerator:
         lines = [f"- {item.content}" for item in state.memory_context[:5]]
         return "\n用户长期偏好（仅影响表达方式，不影响事实内容）：\n" + "\n".join(lines)
 
+    def _format_history(self, state: AgentState) -> str:
+        """历史对话片段（Issue #44）。空历史返回空串，不改变既有 prompt。"""
+        return format_history(state.history)
+
     def _grounded_prompt(self, state: AgentState) -> str:
+        history = self._format_history(state)
+        history_block = f"{history}\n\n" if history else ""
         return (
             f"证据：\n\n{self._format_evidence(state)}\n"
             f"{self._format_preferences(state)}\n\n"
+            f"{history_block}"
             f"用户问题：{state.question}"
         )
 
     def _direct_prompt(self, state: AgentState) -> str:
-        return f"{state.question}{self._format_preferences(state)}"
+        history = self._format_history(state)
+        history_block = f"{history}\n\n" if history else ""
+        return f"{history_block}{state.question}{self._format_preferences(state)}"
 
     # ------------------------------------------------------------------ #
     # 引用审计与降级

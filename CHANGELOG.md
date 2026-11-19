@@ -15,6 +15,10 @@
 
 ### Added
 
+- `app/agent/history_context.py`：多轮历史格式化与字符预算（Issue #44）
+- 测试 `tests/test_history_context.py`（9 项）、`tests/test_multi_turn_integration.py`（12 项）：历史预算、排序、三条 prompt 注入路径、规则路由防污染
+- `app/agent/history_context.py`：多轮历史格式化与字符预算（Issue #44）
+- 测试 `tests/test_history_context.py`（9 项）、`tests/test_multi_turn_integration.py`（12 项）：历史预算、排序、三条 prompt 注入路径、规则路由防污染
 - `app/agent/orchestrator.py`：网页搜索接入编排器，本地证据不足且确实需要联网时按需调用（Issue #40/#41）
 - `app/retrieval/web_search.py`：DuckDuckGo 网页搜索工具，结果转网页 Evidence（Issue #41）
 - 测试 `tests/test_contract_web_evidence.py`（13 项）：文档/网页两种证据、locator 兼容、多轮字段向后兼容
@@ -87,6 +91,12 @@
 
 ### Changed
 
+- `Orchestrator.run()` 新增可选 `history` 参数；Router/Planner Protocol 增加可选 `history`（Issue #44，向后兼容）
+- `app/agent/answer_generator.py`：direct / grounded 两条路径注入历史对话，供模型消解『它/这个』指代
+- `app/ui/streamlit_app.py`：把会话历史构造成 `ConversationTurn` 传给编排器，使多轮在前端可用
+- `Orchestrator.run()` 新增可选 `history` 参数；Router/Planner Protocol 增加可选 `history`（Issue #44，向后兼容）
+- `app/agent/answer_generator.py`：direct / grounded 两条路径注入历史对话，供模型消解『它/这个』指代
+- `app/ui/streamlit_app.py`：把会话历史构造成 `ConversationTurn` 传给编排器，使多轮在前端可用
 - **契约扩展**（Issue #39）：`Evidence` 新增 `url` / `title` / `is_web`，`RetrievalMethod` 新增 `WEB`，`AgentState` 新增 `history`
 - `app/memory/manager.py`：预筛信号扩展「以后回答 / 每次回答 / 回答时请 / 从现在起」等稳定偏好表达（Issue #31）
 - `app/memory/manager.py`：短信号（"我是"/"记住"）改为只在句首或标点后匹配，修复"告诉我是自己查的"误命中

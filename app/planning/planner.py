@@ -36,8 +36,9 @@ import json
 import re
 from typing import Any
 
+from app.agent.history_context import format_history
 from app.core.interfaces import LLM
-from app.core.types import MemoryItem, PlanStep, RouteDecision, RouteType, Usage
+from app.core.types import ConversationTurn, MemoryItem, PlanStep, RouteDecision, RouteType, Usage
 
 __all__ = ["LLMPlanner", "fallback_plan"]
 
@@ -237,6 +238,7 @@ class LLMPlanner:
         question: str,
         route: RouteDecision,
         memory_context: list[MemoryItem] | None = None,
+        history: list[ConversationTurn] | None = None,
     ) -> list[PlanStep]:
         # 只有 complex_task 才拆解。其余两类返回空表示"不需要计划"。
         if route.route != RouteType.COMPLEX_TASK:
@@ -245,10 +247,19 @@ class LLMPlanner:
 
         self.last_usage = Usage()
 
-        user_prompt = (
-            f"用户长期记忆：\n{_format_memory(memory_context)}\n\n"
-            f"用户请求：{question}"
-        )
+        history_text = format_history(history)
+        if history_text:
+            user_prompt = (
+                f"用户长期记忆：\n{_format_memory(memory_context)}\n\n"
+                f"{history_text}\n\n"
+                f"用户请求：{question}"
+            )
+        else:
+            # 历史为空时 prompt 与扩展前逐字一致
+            user_prompt = (
+                f"用户长期记忆：\n{_format_memory(memory_context)}\n\n"
+                f"用户请求：{question}"
+            )
 
         try:
             response = self.llm.generate(

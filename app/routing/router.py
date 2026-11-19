@@ -33,8 +33,9 @@ import json
 import re
 from typing import Any
 
+from app.agent.history_context import format_history
 from app.core.interfaces import LLM
-from app.core.types import MemoryItem, RouteDecision, RouteType, Usage
+from app.core.types import ConversationTurn, MemoryItem, RouteDecision, RouteType, Usage
 
 __all__ = ["LLMRouter", "RuleBasedRouter"]
 
@@ -282,14 +283,25 @@ class LLMRouter:
         question: str,
         has_documents: bool = True,
         memory_context: list[MemoryItem] | None = None,
+        history: list[ConversationTurn] | None = None,
     ) -> RouteDecision:
         self.last_usage = Usage()
 
-        user_prompt = (
-            f"用户是否有可检索的文档：{'是' if has_documents else '否'}\n"
-            f"用户长期记忆：\n{_format_memory(memory_context)}\n\n"
-            f"用户请求：{question}"
-        )
+        history_text = format_history(history)
+        # 历史为空时 prompt 与扩展前逐字一致，保证 RQ1 基线可比
+        if history_text:
+            user_prompt = (
+                f"用户是否有可检索的文档：{'是' if has_documents else '否'}\n"
+                f"用户长期记忆：\n{_format_memory(memory_context)}\n\n"
+                f"{history_text}\n\n"
+                f"用户请求：{question}"
+            )
+        else:
+            user_prompt = (
+                f"用户是否有可检索的文档：{'是' if has_documents else '否'}\n"
+                f"用户长期记忆：\n{_format_memory(memory_context)}\n\n"
+                f"用户请求：{question}"
+            )
 
         try:
             response = self.llm.generate(
@@ -348,5 +360,8 @@ class RuleBasedRouter:
         question: str,
         has_documents: bool = True,
         memory_context: list[MemoryItem] | None = None,
+        history: list[ConversationTurn] | None = None,
     ) -> RouteDecision:
+        # 规则路由刻意忽略 history：关键词匹配只看当前问题，
+        # 否则历史里的"比较""报告"会污染当前轮的分类（Issue #44）。
         return _heuristic_route(question, has_documents)

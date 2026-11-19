@@ -39,6 +39,7 @@ from typing import Protocol, runtime_checkable
 from app.core.types import (
     AgentState,
     ClaimCheck,
+    ConversationTurn,
     Evidence,
     LLMResponse,
     MemoryCandidate,
@@ -146,7 +147,9 @@ class Router(Protocol):
         question: str,
         has_documents: bool = True,
         memory_context: list[MemoryItem] | None = None,
+        history: list[ConversationTurn] | None = None,
     ) -> RouteDecision:
+        # history 是可选扩展（Issue #44）。不传时行为与扩展前一致。
         ...
 
 
@@ -159,7 +162,9 @@ class Planner(Protocol):
         question: str,
         route: RouteDecision,
         memory_context: list[MemoryItem] | None = None,
+        history: list[ConversationTurn] | None = None,
     ) -> list[PlanStep]:
+        # history 是可选扩展（Issue #44）。不传时行为与扩展前一致。
         ...
 
 

@@ -20,6 +20,7 @@ from app.core.types import (
     AgentState,
     ClaimCheck,
     ClaimStatus,
+    ConversationTurn,
     Evidence,
     LLMResponse,
     MemoryCandidate,
@@ -133,7 +134,9 @@ class MockRouter:
         question: str,
         has_documents: bool = True,
         memory_context: list[MemoryItem] | None = None,
+        history: list[ConversationTurn] | None = None,
     ) -> RouteDecision:
+        # Mock 路由与规则路由一致：忽略历史，避免污染关键词分类
         q = question.strip()
         if any(k in q for k in self._COMPLEX):
             return RouteDecision(
@@ -169,6 +172,7 @@ class MockPlanner:
         question: str,
         route: RouteDecision,
         memory_context: list[MemoryItem] | None = None,
+        history: list[ConversationTurn] | None = None,
     ) -> list[PlanStep]:
         if route.route != RouteType.COMPLEX_TASK:
             return []
