@@ -64,13 +64,22 @@ class Retriever(Protocol):
 | 项 | 要求 |
 |---|---|
 | 输入 | 自然语言 query（中文/英文都要能处理） |
-| 输出 | `list[Evidence]`，按 score 降序；**必须带 `file_name` 和 `page_number`** |
+| 输出 | `list[Evidence]`，按 score 降序；**文档证据带 `file_name` + `page_number`，网页证据带 `url` + `title`** |
 | 无命中 | 返回 `[]`，**不要抛异常** |
 | 服务不可用 | 抛 `RetrievalError` |
 | `index_document` | 返回切出的 chunk 数；同一 PDF 重复导入要幂等 |
 
-`Evidence.score` 的语义：**只保证"越大越相关"**。向量余弦分和 RRF 分不可跨方法比较，
+`Evidence.score` 的语义：**只保证"越大越相关"**。向量余弦分、RRF 分和网页分不可跨方法比较，
 所以 `retrieval_method` 字段必须如实填写。
+
+**两种证据来源**（2026-11-18 契约扩展，见 Issue #39）：
+
+| 来源 | `retrieval_method` | 定位字段 | `locator` 示例 |
+|---|---|---|---|
+| 用户文档 | `vector` / `bm25` / `rrf` | `file_name` + `page_number ≥ 1` | `Lec04.pdf p.9` |
+| 网页 | `web` | `url`（**模型层强制必填**）+ `title`；`page_number = 0` | `What is RAG · 网页` |
+
+`Evidence.is_web` 与 `Citation.is_web` 用同一判定（有 url 即网页），UI / evaluation / Mock 统一采用。`Citation` 也支持 `page_number=0`、带 `url` / `title` / `locator`，网页引用不会被伪造为 p.1。Pydantic 模型层强制不变量：WEB 必须有 url、文档 page_number >= 1、网页 Citation page_number 必须为 0。
 
 **最小可用实现骨架**：
 

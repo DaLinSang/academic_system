@@ -15,6 +15,7 @@
 
 ### Added
 
+- 测试 `tests/test_contract_web_evidence.py`（13 项）：文档/网页两种证据、locator 兼容、多轮字段向后兼容
 - 测试 `tests/test_memory_preference_signals.py`（24 项）：Issue #31 的偏好识别、短信号误命中、去重与敏感过滤
 - 测试 `tests/test_router_robustness.py`（21 项）：英文文档路由降级、大小写不敏感、
   泛化英文问句不误检索、`need_memory` 解析与语义
@@ -82,6 +83,7 @@
 
 ### Changed
 
+- **契约扩展**（Issue #39）：`Evidence` 新增 `url` / `title` / `is_web`，`RetrievalMethod` 新增 `WEB`，`AgentState` 新增 `history`
 - `app/memory/manager.py`：预筛信号扩展「以后回答 / 每次回答 / 回答时请 / 从现在起」等稳定偏好表达（Issue #31）
 - `app/memory/manager.py`：短信号（"我是"/"记住"）改为只在句首或标点后匹配，修复"告诉我是自己查的"误命中
 - `app/memory/manager.py`：few-shot 明确"对未来回答方式的要求"属于 preference，即使句子形如指令

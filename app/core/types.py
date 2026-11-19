@@ -26,7 +26,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 __all__ = [
     "RouteType",
@@ -43,6 +43,7 @@ __all__ = [
     "ToolResult",
     "Citation",
     "PlanStep",
+    "ConversationTurn",
     "Usage",
     "TraceEvent",
     "LLMResponse",
@@ -107,6 +108,9 @@ class RetrievalMethod(StrEnum):
     RRF = "rrf"
     """混合排序后的结果。"""
 
+    WEB = "web"
+    """网页检索。网页证据没有页码，用 url 定位。"""
+
     MOCK = "mock"
     """阶段 0 的假数据。"""
 
@@ -155,10 +159,14 @@ class Evidence(_Base):
     chunk_id: str
     document_id: str
     file_name: str
-    page_number: int = Field(ge=1)
+    # 网页证据没有页码，允许 0（"无页码"）。文档证据仍应 >= 1。
+    page_number: int = Field(default=1, ge=0)
     text: str
     score: float = Field(description="越大越相关；RRF 分数与余弦分数不可直接比较")
     retrieval_method: RetrievalMethod = RetrievalMethod.MOCK
+    # 网页来源：url 必填，title 可选。文档证据保持 None。
+    url: str | None = Field(default=None, description="网页证据的可访问 URL")
+    title: str | None = Field(default=None, description="网页标题，用于 UI 展示")
 
     @classmethod
     def from_chunk(
@@ -178,9 +186,25 @@ class Evidence(_Base):
         )
 
     @property
+    def is_web(self) -> bool:
+        return self.retrieval_method is RetrievalMethod.WEB
+
+    @property
     def locator(self) -> str:
-        """人类可读的定位串，例如 'Lec04.pdf p.12'。UI 直接用。"""
+        """人类可读的定位串。文档 'Lec04.pdf p.12'，网页用域名/标题。"""
+        if self.is_web:
+            label = self.title or self.file_name
+            return f"{label} · 网页"
         return f"{self.file_name} p.{self.page_number}"
+
+    @model_validator(mode="after")
+    def _check_source_consistency(self) -> Evidence:
+        """C review #54：在模型层守住来源不变量，别等到 UI 才暴露。"""
+        if self.is_web and not self.url:
+            raise ValueError("WEB 证据必须提供 url")
+        if not self.is_web and self.page_number < 1:
+            raise ValueError("文档证据的 page_number 必须 >= 1（1-based）")
+        return self
 
 
 class MemoryItem(_Base):
@@ -263,8 +287,29 @@ class Citation(_Base):
     chunk_id: str
     document_id: str
     file_name: str
-    page_number: int = Field(ge=1)
+    page_number: int = Field(ge=0)  # 0 = 网页证据，没有页码
     quote: str = Field(default="", description="被引用的原文片段")
+    url: str | None = Field(default=None, description="网页引用的可点击地址")
+    title: str | None = Field(default=None, description="网页标题")
+
+    @property
+    def is_web(self) -> bool:
+        """与 Evidence 用同一来源判定：有 url 即网页。禁止两套口径。"""
+        return self.url is not None
+
+    @property
+    def locator(self) -> str:
+        if self.is_web:
+            return f"{self.title or self.file_name} · 网页"
+        return f"{self.file_name} p.{self.page_number}"
+
+    @model_validator(mode="after")
+    def _check_source_consistency(self) -> Citation:
+        if self.is_web and self.page_number != 0:
+            raise ValueError("网页引用不能有页码（page_number 必须为 0）")
+        if not self.is_web and self.page_number < 1:
+            raise ValueError("文档引用 page_number 必须 >= 1")
+        return self
 
     @classmethod
     def from_evidence(cls, index: int, ev: Evidence, quote: str = "") -> Citation:
@@ -275,6 +320,8 @@ class Citation(_Base):
             file_name=ev.file_name,
             page_number=ev.page_number,
             quote=quote or ev.text[:200],
+            url=ev.url,
+            title=ev.title,
         )
 
 
@@ -343,6 +390,18 @@ class ClaimCheck(_Base):
 
 
 # --------------------------------------------------------------------------- #
+# 多轮对话
+# --------------------------------------------------------------------------- #
+class ConversationTurn(_Base):
+    """历史对话中的一轮。只存问题与最终回答，不存完整 AgentState。"""
+
+    question: str
+    answer: str
+    turn_index: int = Field(ge=0)
+    started_at: datetime = Field(default_factory=utcnow)
+
+
+# --------------------------------------------------------------------------- #
 # 贯穿全流程的状态载体
 # --------------------------------------------------------------------------- #
 class AgentState(_Base):
@@ -365,6 +424,9 @@ class AgentState(_Base):
     session_id: str = "default"
     user_id: str = "default"
     turn_index: int = 0
+    # 上一轮的问答。由调用方传入；为空时行为与此前完全一致（单轮）。
+    # 只放简短历史，完整记录由 SessionStore 负责，不塞进 AgentState。
+    history: list[ConversationTurn] = Field(default_factory=list)
 
     # ---- 消融开关（评测用，UI 侧边栏也直接绑这几个）----
     enable_routing: bool = True
