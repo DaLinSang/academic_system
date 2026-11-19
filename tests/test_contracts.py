@@ -223,6 +223,22 @@ def test_memory_crud():
     assert len(store.list_all()) == before
 
 
+def test_mock_memory_update_and_delete_are_user_scoped():
+    store = MockMemoryStore()
+    item = store.add(
+        MemoryCandidate(tier=MemoryTier.PREFERENCE, content="偏好中文回答"),
+        user_id="alice",
+    )
+
+    assert store.update(item.memory_id, content="被越权修改", user_id="bob") is None
+    assert store.delete(item.memory_id, user_id="bob") is False
+    assert store.list_all("alice")[0].content == "偏好中文回答"
+
+    updated = store.update(item.memory_id, content="偏好简短中文回答", user_id="alice")
+    assert updated is not None and updated.content == "偏好简短中文回答"
+    assert store.delete(item.memory_id, user_id="alice") is True
+
+
 def test_memory_manager_only_stores_stable_statements():
     mgr = MockMemoryManager()
     assert mgr.extract_candidates("今天天气不错", "好的") == []

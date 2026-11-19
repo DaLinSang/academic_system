@@ -209,9 +209,11 @@ class PostgresMemoryStore:
         memory_id: str,
         content: str | None = None,
         importance: float | None = None,
+        *,
+        user_id: str = "default",
     ) -> MemoryItem | None:
         if content is None and importance is None:
-            return self._get_by_id(memory_id)
+            return self._get_by_id(memory_id, user_id)
         vector = self.embedder.embed(content) if content is not None else None
         try:
             with self._connect() as conn:
@@ -222,11 +224,11 @@ class PostgresMemoryStore:
                         embedding = COALESCE(%s::vector, embedding),
                         importance = COALESCE(%s, importance),
                         updated_at = NOW()
-                    WHERE memory_id = %s
+                    WHERE memory_id = %s AND user_id = %s
                     RETURNING memory_id, user_id, tier, content, importance,
                               created_at, updated_at, source_turn, metadata
                     """,
-                    (content, vector, importance, memory_id),
+                    (content, vector, importance, memory_id, user_id),
                 ).fetchone()
             return self._to_item(row) if row else None
         except MemoryStoreError:
@@ -234,25 +236,25 @@ class PostgresMemoryStore:
         except Exception as exc:
             raise MemoryStoreError(f"Failed to update memory: {exc}") from exc
 
-    def _get_by_id(self, memory_id: str) -> MemoryItem | None:
+    def _get_by_id(self, memory_id: str, user_id: str) -> MemoryItem | None:
         try:
             with self._connect() as conn:
                 row = conn.execute(
                     """SELECT memory_id, user_id, tier, content, importance,
                               created_at, updated_at, source_turn, metadata
-                       FROM memories WHERE memory_id = %s""",
-                    (memory_id,),
+                       FROM memories WHERE memory_id = %s AND user_id = %s""",
+                    (memory_id, user_id),
                 ).fetchone()
             return self._to_item(row) if row else None
         except Exception as exc:
             raise MemoryStoreError(f"Failed to read memory: {exc}") from exc
 
-    def delete(self, memory_id: str) -> bool:
+    def delete(self, memory_id: str, *, user_id: str = "default") -> bool:
         try:
             with self._connect() as conn:
                 row = conn.execute(
-                    "DELETE FROM memories WHERE memory_id = %s RETURNING memory_id",
-                    (memory_id,),
+                    "DELETE FROM memories WHERE memory_id = %s AND user_id = %s RETURNING memory_id",
+                    (memory_id, user_id),
                 ).fetchone()
             return row is not None
         except Exception as exc:

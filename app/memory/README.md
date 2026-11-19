@@ -81,8 +81,8 @@ Orchestrator 生成回答后
 |---|---|---|
 | `add(candidate, user_id)` | `MemoryCandidate`、用户 ID | 编码内容、保存、返回含 ID/时间戳的 `MemoryItem` |
 | `search(query, user_id, tiers, top_k)` | 本次问题、用户 ID、可选类型、条数 | 返回相近的 `MemoryItem` 列表；空问题返回 `[]` |
-| `update(memory_id, content, importance)` | 记忆 ID、可选新正文/重要性 | 返回更新的条目；ID 不存在返回 `None`；正文改变时重新计算向量 |
-| `delete(memory_id)` | 记忆 ID | 删除成功返回 `True`，不存在返回 `False` |
+| `update(memory_id, content, importance, user_id=...)` | 记忆 ID、所属用户、可选新正文/重要性 | 只更新该用户自己的条目；不存在或不属于该用户返回 `None`；正文改变时重新计算向量 |
+| `delete(memory_id, user_id=...)` | 记忆 ID、所属用户 | 只删除该用户自己的条目；成功返回 `True`，不存在或不属于该用户返回 `False` |
 | `list_all(user_id)` | 用户 ID | 列出该用户记忆，供管理界面使用 |
 
 `search()` 先过滤相似度低于 0.3 的记忆，减少误召回，再综合向量相似度、更新时间衰减和候选的 `importance` 排序。默认权重为 0.6、0.2、0.2；近期记忆的 recency 分数按 30 天时间常数衰减。可在构造 `PostgresMemoryStore` 时调整阈值和权重。
@@ -126,7 +126,7 @@ for item in items:
     print(item.memory_id, item.tier, item.content)
 ```
 
-删除单条：`orch.memory_store.delete(memory_id)`。清空该用户：先 `list_all(user_id)` 再逐条 `delete(item.memory_id)`。当前冻结接口的 `delete()` 只收 ID，不附带 `user_id`；C 的界面应只允许用户操作其 `list_all(user_id)` 返回的 ID。长期记忆开关关闭时传 `enable_memory=False`，同一轮的读取和写入都会跳过。`B1/B2` 默认关闭记忆；`B3/B4` 默认开启。
+更新和删除必须同时传入当前 `user_id`：`orch.memory_store.update(memory_id, content=..., user_id=user_id)`、`orch.memory_store.delete(memory_id, user_id=user_id)`。存储层会同时匹配 `memory_id` 与 `user_id`；即使调用方拿到其他用户的记忆 ID，也不能读取、修改或删除该条记忆。Mock 与 PostgreSQL 实现遵守相同规则。当前方案只按用户隔离长期记忆；workspace 暂不进入检索或记忆接口，PDF 索引仍为全局共享，后续需要时再经公共接口流程扩展。长期记忆开关关闭时传 `enable_memory=False`，同一轮的读取和写入都会跳过。`B1/B2` 默认关闭记忆；`B3/B4` 默认开启。
 
 Mock 演示使用 `build_mock_orchestrator()`；它注入 `MockMemoryStore`、`MockMemoryManager`，不会访问真实 PostgreSQL 或 Ollama。真实演示可用 `uv run python -m app.demo --real -m B4 -q "请用中文解释 RAG"`，其中 demo 的固定 `user_id` 是 `demo-user`。
 

@@ -15,6 +15,8 @@
 
 ### Added
 
+- `MemoryStore.update()` and `delete()` now enforce `user_id` isolation; synchronized PostgreSQL, Mock, UI, tests, and module documentation. Workspace isolation remains deferred; PDF indexing is shared.
+
 - `app/agent/history_context.py`：多轮历史格式化与字符预算（Issue #44）
 - 测试 `tests/test_history_context.py`（9 项）、`tests/test_multi_turn_integration.py`（12 项）：历史预算、排序、三条 prompt 注入路径、规则路由防污染
 - `app/agent/history_context.py`：多轮历史格式化与字符预算（Issue #44）

@@ -148,15 +148,23 @@ def _render_memories(orch: Any, user_id: str, enabled: bool) -> None:
             left, right = st.columns(2)
             if left.button("保存修改", key=f"memory-save-{memory.memory_id}"):
                 try:
-                    orch.memory_store.update(memory.memory_id, content, importance)
-                    st.success("记忆已更新。")
+                    updated = orch.memory_store.update(
+                        memory.memory_id, content, importance, user_id=user_id
+                    )
+                    if updated is None:
+                        st.warning("该记忆不存在，或不属于当前用户。")
+                    else:
+                        st.success("记忆已更新。")
                     st.rerun()
                 except Exception as exc:  # noqa: BLE001
                     st.error(f"更新失败：{type(exc).__name__}: {exc}")
             if right.button("删除", key=f"memory-delete-{memory.memory_id}"):
                 try:
-                    orch.memory_store.delete(memory.memory_id)
-                    st.success("记忆已删除。")
+                    deleted = orch.memory_store.delete(memory.memory_id, user_id=user_id)
+                    if not deleted:
+                        st.warning("该记忆不存在，或不属于当前用户。")
+                    else:
+                        st.success("记忆已删除。")
                     st.rerun()
                 except Exception as exc:  # noqa: BLE001
                     st.error(f"删除失败：{type(exc).__name__}: {exc}")

@@ -57,20 +57,26 @@ def test_contract_crud_and_persistence(memory_store):
     reopened = PostgresMemoryStore(embedder=FakeEmbedder())
     assert [item.memory_id for item in reopened.search("中文回答", user_id)] == [created.memory_id]
 
-    changed = reopened.update(created.memory_id, content="请用中文简短回答", importance=0.9)
+    changed = reopened.update(
+        created.memory_id,
+        content="请用中文简短回答",
+        importance=0.9,
+        user_id=user_id,
+    )
     assert changed.content == "请用中文简短回答"
     assert changed.importance == 0.9
-    assert reopened.update("missing-memory-id", content="无") is None
+    assert reopened.update("missing-memory-id", content="无", user_id=user_id) is None
 
-    assert reopened.delete(created.memory_id) is True
-    assert reopened.delete(created.memory_id) is False
+    assert reopened.delete(created.memory_id, user_id=user_id) is True
+    assert reopened.delete(created.memory_id, user_id=user_id) is False
     assert reopened.search("简短回答", user_id) == []
 
 
 def test_user_and_tier_isolation(memory_store):
     store, user_id = memory_store
     own = store.add(candidate(MemoryTier.PROFILE, "正在学中文"), user_id)
-    store.add(candidate(MemoryTier.PREFERENCE, "偏好中文回答"), f"{user_id}-other")
+    other_user_id = f"{user_id}-other"
+    other = store.add(candidate(MemoryTier.PREFERENCE, "偏好中文回答"), other_user_id)
 
     assert [m.memory_id for m in store.list_all(user_id)] == [own.memory_id]
     assert [m.memory_id for m in store.search("中文", user_id)] == [own.memory_id]
@@ -78,6 +84,23 @@ def test_user_and_tier_isolation(memory_store):
     assert store.search("中文", user_id, tiers=[]) == []
     assert store.search("中文", user_id, top_k=0) == []
     assert store.search("unrelated topic", user_id) == []
+    assert store.update(other.memory_id, content="越权修改", user_id=user_id) is None
+    assert store.delete(other.memory_id, user_id=user_id) is False
+    assert [m.memory_id for m in store.list_all(other_user_id)] == [other.memory_id]
+
+
+def test_owner_can_update_and_delete_only_own_memory(memory_store):
+    store, user_id = memory_store
+    other_user_id = f"{user_id}-other"
+    own = store.add(candidate(MemoryTier.PREFERENCE, "偏好中文回答"), user_id)
+    other = store.add(candidate(MemoryTier.PREFERENCE, "偏好英文回答"), other_user_id)
+
+    changed = store.update(own.memory_id, content="偏好简短中文回答", user_id=user_id)
+    assert changed is not None
+    assert changed.content == "偏好简短中文回答"
+    assert store.delete(own.memory_id, user_id=user_id) is True
+    assert store.list_all(user_id) == []
+    assert [item.memory_id for item in store.list_all(other_user_id)] == [other.memory_id]
 
 
 def test_semantic_recency_importance_ranking(memory_store):
