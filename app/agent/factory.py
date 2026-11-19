@@ -47,6 +47,9 @@ def build_orchestrator(
     top_k: int = 5,
     enable_replan: bool = True,
     max_replans: int = 1,
+    web_search_tool: object | None = None,
+    web_search_policy: object | None = None,
+    enable_web_search: bool = True,
 ) -> Orchestrator:
     return Orchestrator(
         router=router,
@@ -60,6 +63,9 @@ def build_orchestrator(
         top_k=top_k,
         enable_replan=enable_replan,
         max_replans=max_replans,
+        web_search_tool=web_search_tool,
+        web_search_policy=web_search_policy,
+        enable_web_search=enable_web_search,
     )
 
 
@@ -82,6 +88,7 @@ def build_mock_orchestrator(top_k: int = 5) -> Orchestrator:
 def build_stage1_orchestrator(
     top_k: int = 5,
     memory_strategy: Literal["llm", "rule"] = "llm",
+    enable_web_search: bool = True,
 ) -> Orchestrator:
     """阶段 1 的真实装配：能跑真模型的链路。
 
@@ -115,6 +122,7 @@ def build_stage1_orchestrator(
     from app.memory import LLMMemoryManager, PostgresMemoryStore, RuleBasedMemoryManager
     from app.planning.planner import LLMPlanner
     from app.retrieval import HybridRetriever
+    from app.retrieval.web_search import WebSearchTool
     from app.routing.router import LLMRouter
     from app.verification import LexicalVerifier, SemanticVerifier
 
@@ -137,4 +145,6 @@ def build_stage1_orchestrator(
         answer_generator=LLMAnswerGenerator(llm),
         llm=llm,
         top_k=top_k,
+        web_search_tool=WebSearchTool() if enable_web_search else None,
+        enable_web_search=enable_web_search,
     )
