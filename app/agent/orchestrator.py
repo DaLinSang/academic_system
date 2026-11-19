@@ -257,6 +257,11 @@ class Orchestrator:
             if not ok:
                 return
 
+            # C review #38：HybridRetriever.retrieve() 每次调用开头都会把
+            # last_warning 重置为 None。必须在每次调用后立刻读取，否则多查询
+            # 时最后一次成功会把前面所有降级记录抹掉。
+            degradations: list[dict[str, object]] = []
+
             for step, query in jobs:
                 started = time.perf_counter()
                 step_id = step.step_id if step is not None else None
@@ -283,6 +288,21 @@ class Orchestrator:
 
                 latency = round((time.perf_counter() - started) * 1000, 2)
                 state.add_evidence(found)
+
+                # 立即读取本次调用的降级原因，不让它被下一次 retrieve 清掉
+                warning = getattr(self.retriever, "last_warning", None)
+                if warning:
+                    degradations.append(
+                        {"query": query, "step_id": step_id, "reason": warning}
+                    )
+                    state.log(
+                        "retrieval",
+                        "degraded",
+                        reason=warning,
+                        query=query,
+                        step_id=step_id,
+                    )
+
                 state.record_tool(
                     ToolResult(
                         tool_name="retrieval",
@@ -301,12 +321,17 @@ class Orchestrator:
             state.current_step = sum(
                 1 for s in state.plan if s.status is not StepStatus.PENDING
             )
+            # 汇总所有查询的降级原因。多查询场景下只报最后一个会误导 RQ1/RQ3。
+            merged_warning = "；".join(str(d["reason"]) for d in degradations) or None
             state.log(
                 "retrieval",
                 "end",
                 evidence=len(state.evidence),
                 queries=len(jobs),
                 tools_recorded=len(state.tool_results),
+                warning=merged_warning,
+                degraded=bool(degradations),
+                degraded_queries=[str(d["query"]) for d in degradations],
             )
 
     def _run_verification(self, state: AgentState) -> None:
