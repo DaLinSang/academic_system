@@ -15,6 +15,7 @@
 
 ### Added
 
+- 测试 `tests/test_session_boundary_a32.py`（7 项）：SessionStore/RunLogger 边界、恢复后 turn_index 连续、会话/用户隔离、脱敏（Issue #32 A 部分）
 - `MemoryStore.update()` and `delete()` now enforce `user_id` isolation; synchronized PostgreSQL, Mock, UI, tests, and module documentation. Workspace isolation remains deferred; PDF indexing is shared.
 
 - `app/agent/history_context.py`：多轮历史格式化与字符预算（Issue #44）
@@ -93,6 +94,7 @@
 
 ### Changed
 
+- `app/agent/README.md`：补 SessionStore 章节与 SessionStore/RunLogger 边界、turn_index 连续规则、不做 workspace 的决策；修正过期的'多轮未接入/web_search 未接入'描述（Issue #32 A 部分）
 - `Orchestrator.run()` 新增可选 `history` 参数；Router/Planner Protocol 增加可选 `history`（Issue #44，向后兼容）
 - `app/agent/answer_generator.py`：direct / grounded 两条路径注入历史对话，供模型消解『它/这个』指代
 - `app/ui/streamlit_app.py`：把会话历史构造成 `ConversationTurn` 传给编排器，使多轮在前端可用
