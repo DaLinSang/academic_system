@@ -66,6 +66,10 @@ class OpenAICompatibleLLM:
         self.model = model
         self.timeout = timeout or settings.llm.timeout
         self.max_retries = max_retries if max_retries is not None else settings.llm.max_retries
+        # 上一次 generate 的重试次数与额外等待耗时。用于 RQ4：
+        # 失败尝试虽然通常不计费，但用户确实等了这段时间，不能从延迟里漏掉。
+        self.last_retries = 0
+        self.last_retry_latency_ms = 0.0
         self._client = OpenAI(
             api_key=api_key,
             base_url=base_url,
@@ -92,18 +96,27 @@ class OpenAICompatibleLLM:
             kwargs["response_format"] = {"type": "json_object"}
 
         last_error: Exception | None = None
+        self.last_retries = 0
+        self.last_retry_latency_ms = 0.0
         for attempt in range(self.max_retries + 1):
             t0 = time.perf_counter()
             try:
                 resp = self._client.chat.completions.create(**kwargs)
                 latency_ms = (time.perf_counter() - t0) * 1000
+                # RQ4 的 latency 单一来源是 Orchestrator 的 pipeline 端到端墙钟，
+                # 它天然包含失败尝试与退避。这里只记本次成功调用的耗时，
+                # 否则同一段等待会在 usage 汇总时重复计入。
                 return self._to_response(resp, latency_ms)
             except Exception as exc:  # noqa: BLE001 - SDK 异常类型太多，统一判断
                 last_error = exc
+                # 记录这次失败尝试消耗的时间（含退避等待），RQ4 要算进端到端延迟
+                self.last_retry_latency_ms += (time.perf_counter() - t0) * 1000
                 if attempt >= self.max_retries or not self._is_retryable(exc):
                     break
+                self.last_retries += 1
                 # 指数退避：0.5s, 1s, 2s ...
                 time.sleep(0.5 * (2**attempt))
+                self.last_retry_latency_ms += 500 * (2**attempt)
 
         raise LLMError(f"模型调用失败（{self.model}）：{last_error}") from last_error
 

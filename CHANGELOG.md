@@ -19,6 +19,7 @@
 - 测试 `tests/test_contract_web_evidence.py`（13 项）：文档/网页两种证据、locator 兼容、多轮字段向后兼容
 - 测试 `tests/test_memory_preference_signals.py`（24 项）：Issue #31 的偏好识别、短信号误命中、去重与敏感过滤
 - 测试 `tests/test_replan.py`（11 项）：校验失败触发重规划、新计划查询真的执行、预算上限、失败不毁回答
+- 测试 `tests/test_retry_observability.py`（9 项）：重试恢复、不可重试错误、计数与延迟、trace 记录
 - 测试 `tests/test_router_robustness.py`（21 项）：英文文档路由降级、大小写不敏感、
   泛化英文问句不误检索、`need_memory` 解析与语义
 - **实验运行记录器**（`app/agent/run_logger.py`）
@@ -91,6 +92,10 @@
 - `app/memory/manager.py`：few-shot 明确"对未来回答方式的要求"属于 preference，即使句子形如指令
 - `app/agent/orchestrator.py`：校验出现 unsupported claim 且任务有计划时触发一次重规划（Issue #47），预算硬上限 1 次
 - `app/agent/orchestrator.py`：`llm` 类步骤由 PENDING 改为 SKIPPED，如实反映"有意跳过、由 AnswerGenerator 统一完成"
+- `app/llm/client.py`：失败重试的等待时间计入 `Usage.latency_ms`，并暴露 `last_retries` / `last_retry_latency_ms`（Issue #48）
+- `app/agent/orchestrator.py`：`_absorb_usage()` 把重试次数与额外耗时写进 trace
+- `app/llm/client.py`：失败重试的等待时间计入 `Usage.latency_ms`，并暴露 `last_retries` / `last_retry_latency_ms`（Issue #48）
+- `app/agent/orchestrator.py`：`_absorb_usage()` 把重试次数与额外耗时写进 trace
 - `app/routing/router.py`：降级关键词加入英文（Issue #25）。此前只认中文，B 的英文 PDF 在无 key 时全部被误判为 direct
 - `app/routing/router.py`：降级匹配改为 `casefold()`，英文大小写不敏感
 - `app/routing/router.py`：系统提示词补充英文文档问题的判断规则，`need_memory` 语义改为「已有记忆是否有帮助」，并明确读取开关是 `enable_memory`

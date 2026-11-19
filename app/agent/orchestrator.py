@@ -162,6 +162,7 @@ class Orchestrator:
                 if ok:
                     state.plan = self.planner.plan(question, route, state.memory_context)
                     self._absorb_usage(state, self.planner)
+                    self._record_retry(state, "planner")
                     state.log("plan", "end", steps=len(state.plan))
 
         # 4) 工具执行（当前只有检索；web_search 与代码执行留给后续迭代）
@@ -173,6 +174,7 @@ class Orchestrator:
             if ok:
                 state.draft_answer = self.answer_generator.generate(state)
                 state.build_citations()
+                self._record_retry(state, "generate")
                 state.log("generate", "end", chars=len(state.draft_answer))
 
         # 6) 校验
@@ -247,6 +249,7 @@ class Orchestrator:
                     memory_context=state.memory_context,
                 )
                 self._absorb_usage(state, self.router)
+                self._record_retry(state, "router")
                 state.route = route
                 state.log("router", "end", route=str(route.route), reason=route.reason)
                 return route
@@ -379,6 +382,7 @@ class Orchestrator:
             try:
                 state.claims = self.verifier.verify(state.draft_answer, state.evidence)
                 self._absorb_usage(state, self.verifier)
+                self._record_retry(state, "verify")
                 state.log(
                     "verify",
                     "end",
@@ -483,6 +487,7 @@ class Orchestrator:
                     state.question, state.final_answer, state.memory_context
                 )
                 self._absorb_usage(state, self.memory_manager)
+                self._record_retry(state, "memory_write")
                 for c in candidates:
                     self.memory_store.add(c, user_id=state.user_id)
 
@@ -513,6 +518,28 @@ class Orchestrator:
         usage = getattr(component, "last_usage", None)
         if isinstance(usage, Usage):
             state.usage = state.usage.add(usage)
+
+    def _record_retry(self, state: AgentState, stage: str) -> None:
+        """记录刚发生的 LLM 重试，标明属于哪个阶段。
+
+        C review #53：LLMRouter / LLMPlanner / SemanticVerifier / LLMMemoryManager
+        这些包装组件没有 `last_retries`，计数器在它们共享的 `self.llm` 上。
+        此前从 component 读取，真实链路里永远拿不到，测试还是假阳性。
+        """
+        retries = getattr(self.llm, "last_retries", 0)
+        if retries:
+            state.log(
+                "llm",
+                "retry",
+                phase=stage,
+                retries=retries,
+                retry_latency_ms=round(
+                    float(getattr(self.llm, "last_retry_latency_ms", 0.0)), 2
+                ),
+            )
+            # 消费掉计数器：否则同一个 LLM 实例会让后续所有阶段都误记一次重试
+            self.llm.last_retries = 0
+            self.llm.last_retry_latency_ms = 0.0
 
     # ------------------------------------------------------------------ #
     # 最终答案组装
