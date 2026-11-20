@@ -317,3 +317,42 @@ def test_all_backends_fail_reports_both():
     assert results == []
     assert "ddg" in (tool.last_warning or "")
     assert "bing" in (tool.last_warning or "")
+
+
+def test_bing_redirect_url_is_decoded():
+    """Bing 的 /ck/a?u=a1<base64> 必须解码成真实 URL，否则用户拿不到来源。"""
+    import base64
+    target = "https://www.hku.hk/course/comp7608"
+    encoded = "a1" + base64.urlsafe_b64encode(target.encode()).decode().rstrip("=")
+    bing_href = f"https://www.bing.com/ck/a?u={encoded}&p=abc"
+
+    from app.retrieval.web_search import _SearchResultParser
+    assert _SearchResultParser._normalise_bing_url(bing_href) == target
+
+
+def test_bing_decoded_url_is_used_for_evidence():
+    """端到端：Bing 跳转链接解码后进 Evidence.url，可被用户点击。"""
+    import base64
+    target = "https://www.hku.hk/course/comp7608"
+    encoded = "a1" + base64.urlsafe_b64encode(target.encode()).decode().rstrip("=")
+    bing_html = f"""
+    <html><body><li class="b_algo">
+      <h2><a href="https://www.bing.com/ck/a?u={encoded}&p=abc">HKU COMP7608</a></h2>
+      <div class="b_caption"><p>Course introduction.</p></div>
+    </li></body></html>
+    """
+
+    def handler(request):
+        url = str(request.url)
+        if "duckduckgo" in url:
+            return httpx.Response(200, text="<html></html>")  # 无结果，触发 Bing
+        if "bing.com" in url and "/ck/a" not in url:
+            return httpx.Response(200, text=bing_html)
+        return httpx.Response(200, text=PAGE_HTML)
+
+    tool = make_tool(handler, fetch_pages=False)
+    results = tool.search("COMP7608", top_k=3)
+
+    assert len(results) == 1
+    assert results[0].url == target
+    assert results[0].file_name == "www.hku.hk"

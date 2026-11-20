@@ -625,8 +625,40 @@ class Orchestrator:
     # ------------------------------------------------------------------ #
     # 最终答案组装
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _web_search_note(state: AgentState) -> str:
+        """本轮联网但网页证据未支撑任何结论时，如实说明（Issue #66）。
+
+        区分三种情况，避免把"工具没搜到"说成"模型无法访问网页"：
+        - 没调用工具 → 不加说明
+        - 调用了但网络失败/0 条 → 说明"本轮网页搜索失败或未找到结果"
+        - 搜到了但证据与问题不相关 → 说明"搜索到 N 条但未能支撑回答"
+        """
+        end = next(
+            (e for e in state.trace if e.stage == "web_search" and e.event == "end"),
+            None,
+        )
+        if end is None:
+            return ""
+        count = int(end.detail.get("count", 0) or 0)
+        web_chunks = {e.chunk_id for e in state.evidence if e.url}
+        web_supported = any(
+            web_chunks.intersection(c.supporting_evidence or [])
+            for c in state.claims
+            if c.status in (ClaimStatus.SUPPORTED, ClaimStatus.PARTIALLY_SUPPORTED)
+        )
+        if web_supported:
+            return ""
+        if count == 0:
+            return "\n\nℹ️ 本轮网页搜索未找到可用结果；以上回答未使用网页来源。"
+        return (
+            f"\n\nℹ️ 本轮网页搜索返回 {count} 条结果，但没有找到能支撑本问题的网页证据；"
+            "以上回答未使用网页来源。"
+        )
+
     def _compose_final(self, state: AgentState) -> str:
         body = state.draft_answer or "抱歉，本次没有生成有效回答。"
+        body += self._web_search_note(state)
 
         # 没有检索到任何证据时，答案本身已经是"无证据"声明，
         # 再列一遍 unsupported 只会重复报警，反而降低可读性。

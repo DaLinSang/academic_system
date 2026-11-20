@@ -20,6 +20,7 @@ Bing 在某些区域会对纯英文查询做词典式改写，导致学术查询
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import ipaddress
 import re
@@ -146,7 +147,10 @@ class _SearchResultParser(HTMLParser):
 
         if self._capture == "link" and tag == "a":
             if self._title and self._url:
-                self.results.append(WebResult(self._title, self._url))
+                # Bing 的链接是 /ck/a?... 跳转，必须解码成真实 URL，
+                # 否则证据里只有 bing.com 跳转页，用户拿不到可点击来源。
+                url = self._normalise_bing_url(self._url) if self.backend == "bing" else self._url
+                self.results.append(WebResult(self._title, url))
             self._capture = None
             self._in_bing_h2 = False
             self._url = ""
@@ -159,6 +163,28 @@ class _SearchResultParser(HTMLParser):
             self._in_bing_algo = False
             self._in_bing_h2 = False
             self._in_bing_caption = False
+
+    @staticmethod
+    def _normalise_bing_url(href: str) -> str:
+        """把 Bing 的 /ck/a?u=a1<base64url> 跳转链接解码成真实目标 URL。
+
+        解码失败时原样返回，不抛异常打断整次搜索。
+        """
+        parsed = urlparse(href)
+        if "bing.com" not in parsed.netloc or "/ck/a" not in parsed.path:
+            return href
+        encoded = parse_qs(parsed.query).get("u", [""])[0]
+        if not encoded.startswith("a1"):
+            return href
+        try:
+            payload = encoded[2:]
+            payload += "=" * (-len(payload) % 4)  # base64url 可能省略 padding
+            decoded = base64.urlsafe_b64decode(payload).decode("utf-8")
+            if decoded.startswith(("http://", "https://")):
+                return decoded
+        except Exception:  # noqa: BLE001 - 解码失败就保留原链接
+            pass
+        return href
 
     @staticmethod
     def _normalise_url(href: str) -> str:
