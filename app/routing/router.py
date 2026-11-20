@@ -66,9 +66,13 @@ _SYSTEM_PROMPT = """你是学术知识助手的路由器。判断用户请求属
    "What are the limitations of X?" 这类针对某个具体方法的评价性问题，用户通常期待基于
    材料回答，应归 document_retrieval。只有闲聊、翻译、润色、天气等明显与文档无关的请求
    才归 direct。
+10. need_web_search：是否需要联网查外部网页。用户明确要求"查询官网/搜索网页/找最新公开
+   信息/给出网页链接"，或问题依赖本地文档不可能包含的外部实时事实时填 true，即使本地有
+   文档证据。例："查香港大学官网 COMP7608 最新介绍并给链接" → true。
+   普通文档问答（"讲义里 Self-RAG 是什么"）填 false。
 
 只输出下面这个 json 对象，不要输出任何其他内容：
-{"route": "direct|document_retrieval|complex_task", "need_retrieval": true, "need_memory": false, "need_planning": false, "confidence": 0.0, "reason": ""}"""
+{"route": "direct|document_retrieval|complex_task", "need_retrieval": true, "need_memory": false, "need_planning": false, "need_web_search": false, "confidence": 0.0, "reason": ""}"""
 
 # --------------------------------------------------------------------------- #
 # 关键词启发式：只作为降级路径，不参与正常路由

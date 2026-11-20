@@ -15,6 +15,7 @@
 
 ### Added
 
+- 测试 `tests/test_web_search_regression_66.py`（4 项）：联网但未支撑答案时如实说明，区分工具未调用/失败/不相关（Issue #66）
 - 测试 `tests/test_session_boundary_a32.py`（7 项）：SessionStore/RunLogger 边界、恢复后 turn_index 连续、会话/用户隔离、脱敏（Issue #32 A 部分）
 - `MemoryStore.update()` and `delete()` now enforce `user_id` isolation; synchronized PostgreSQL, Mock, UI, tests, and module documentation. Workspace isolation remains deferred; PDF indexing is shared.
 
@@ -94,6 +95,9 @@
 
 ### Changed
 
+- `app/routing/router.py`：提示词补 need_web_search 判断规则（官网/最新/给链接 → true），示例 JSON 补字段（Issue #66）
+- `app/retrieval/web_search.py`：Bing 的 /ck/a 跳转链接解码成真实 URL，用户拿到可点击来源（Issue #66）
+- `app/agent/orchestrator.py`：本轮联网但无网页证据支撑时，答案末尾如实说明（Issue #66）
 - `app/retrieval/web_search.py`：DuckDuckGo 不可达时自动降级到 Bing；默认超时 10s→5s；解析器同时支持两家 HTML 结构。修复部分网络下联网搜索一直 timeout 的问题
 - `app/agent/README.md`：补 SessionStore 章节与 SessionStore/RunLogger 边界、turn_index 连续规则、不做 workspace 的决策；修正过期的'多轮未接入/web_search 未接入'描述（Issue #32 A 部分）
 - `Orchestrator.run()` 新增可选 `history` 参数；Router/Planner Protocol 增加可选 `history`（Issue #44，向后兼容）
