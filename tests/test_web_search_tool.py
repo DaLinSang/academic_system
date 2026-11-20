@@ -249,3 +249,71 @@ def test_public_url_is_allowed():
     from app.retrieval.web_search import _assert_safe_url
 
     _assert_safe_url("https://example.com/rag")  # 不抛异常即可
+
+
+# --------------------------------------------------------------------------- #
+# 搜索后端 fallback：DDG 不可达时自动切 Bing（网络环境问题）
+# --------------------------------------------------------------------------- #
+BING_HTML = """
+<html><body><ol id="b_results">
+  <li class="b_algo">
+    <h2><a href="https://example.org/rag">What is RAG?</a></h2>
+    <div class="b_caption"><p>RAG combines retrieval and generation.</p></div>
+  </li>
+  <li class="b_algo">
+    <h2><a href="https://docs.org/rag-eval">RAG evaluation</a></h2>
+    <div class="b_caption"><p>How to evaluate a RAG system.</p></div>
+  </li>
+</ol></body></html>
+"""
+
+
+def test_fallback_to_bing_when_ddg_times_out():
+    """DDG 抛超时异常时，自动用 Bing，结果正常返回。"""
+    def handler(request):
+        url = str(request.url)
+        if "duckduckgo" in url:
+            raise httpx.ReadTimeout("timed out")
+        if "bing.com" in url:
+            return httpx.Response(200, text=BING_HTML)
+        return httpx.Response(200, text=PAGE_HTML)
+
+    tool = make_tool(handler)
+    results = tool.search("what is RAG", top_k=5)
+
+    assert len(results) == 2
+    assert results[0].title == "What is RAG?"
+    assert results[0].url == "https://example.org/rag"
+    assert results[0].retrieval_method is RetrievalMethod.WEB
+    assert "retrieved documents" in results[0].text  # 抓到了正文
+    assert tool.last_warning is None
+
+
+def test_bing_parser_extracts_title_and_snippet():
+    """Bing 的 b_algo 结构能被解析（标题链接 + b_caption 摘要）。"""
+    def handler(request):
+        url = str(request.url)
+        if "duckduckgo" in url:
+            return httpx.Response(200, text="<html><body>nothing</body></html>")
+        if "bing.com" in url:
+            return httpx.Response(200, text=BING_HTML)
+        return httpx.Response(200, text=PAGE_HTML)
+
+    tool = make_tool(handler, fetch_pages=False)
+    results = tool.search("rag", top_k=5)
+
+    assert [r.title for r in results] == ["What is RAG?", "RAG evaluation"]
+    assert "How to evaluate a RAG system." in results[1].text
+
+
+def test_all_backends_fail_reports_both():
+    """两个引擎都失败时，warning 里同时点名 ddg 与 bing，便于定位。"""
+    def handler(request):
+        raise httpx.ConnectError("no network")
+
+    tool = make_tool(handler)
+    results = tool.search("rag", top_k=3)
+
+    assert results == []
+    assert "ddg" in (tool.last_warning or "")
+    assert "bing" in (tool.last_warning or "")
