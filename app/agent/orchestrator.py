@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 import traceback
 from collections.abc import Iterator
@@ -334,6 +335,33 @@ class Orchestrator:
                 warning=warning,
             )
 
+    @staticmethod
+    def _enrich_query(query: str, state: AgentState) -> str:
+        """给检索查询补回原问题的来源约束与历史指代（Issue #64）。
+
+        Planner 生成的子查询常常丢掉用户显式指定的 PDF 文件名
+        （实测"总结 rag_paper.pdf 的..."拆出的子查询只剩"研究目标..."），
+        导致 Retriever 的来源限定失效。这里统一补：
+          1. 原问题里显式出现的 .pdf 文件名（子查询没带时才补）
+          2. 短指代追问的最近用户问题（只用 question，不用助手回答当事实）
+        两份信息都只是查询上下文，不作为证据——证据仍来自本轮检索。
+        """
+        enriched = query
+        # 1) 文件名来源约束
+        original_files = re.findall(r"[\w.-]+\.pdf\b", state.question, re.I)
+        missing_files = [f for f in original_files if f.casefold() not in enriched.casefold()]
+        if missing_files:
+            enriched = f"{' '.join(missing_files)} {enriched}"
+
+        # 2) 短指代：补最近两轮用户问题（不取助手输出）
+        lowered = enriched.casefold()
+        if state.history and any(
+            w in lowered for w in ("它", "刚才", "上述", "这个方法", "that method", "its ", "it ")
+        ):
+            context = " ".join(turn.question[:300] for turn in state.history[-2:])
+            enriched = f"{context}\n当前问题：{enriched}"
+        return enriched
+
     def _run_retrieval(self, state: AgentState) -> None:
         """执行检索工具，并把每次调用记进 `tool_results`。
 
@@ -345,13 +373,11 @@ class Orchestrator:
         失败案例分析拿不到任何工具级数据。
         """
         planned = [s for s in state.plan if s.tool == "retrieval" and s.query]
-        query = state.question
-        # Resolve short follow-ups using user questions only, never generated claims.
-        if state.history and any(word in query.casefold() for word in
-                                 ("它", "刚才", "上述", "这个方法", "that method", "its ", "it ")):
-            context = " ".join(turn.question[:300] for turn in state.history[-2:])
-            query = f"{context}\n当前问题：{query}"
-        jobs: list = [(s, s.query) for s in planned] if planned else [(None, query)]
+        if planned:
+            # 每个子查询都要继承原问题的文件名来源与多轮指代（Issue #64）
+            jobs: list = [(s, self._enrich_query(s.query, state)) for s in planned]
+        else:
+            jobs = [(None, self._enrich_query(state.question, state))]
 
         with self._stage(state, "retrieval") as ok:
             if not ok:
@@ -365,6 +391,14 @@ class Orchestrator:
             for step, query in jobs:
                 started = time.perf_counter()
                 step_id = step.step_id if step is not None else None
+                # Issue #64：把实际检索查询与来源约束写进 trace，UI/报告可核对
+                state.log(
+                    "retrieval",
+                    "query",
+                    step_id=step_id,
+                    query=query,
+                    source_constraint=re.findall(r"[\w.-]+\.pdf\b", query, re.I),
+                )
                 try:
                     overview = any(word in query.casefold() for word in
                                    ("总结", "概括", "主要结论", "summar", "overview"))
