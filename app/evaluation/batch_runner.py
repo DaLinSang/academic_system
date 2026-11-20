@@ -49,6 +49,8 @@ def run_evaluation(
     if repeats < 1:
         raise ValueError("repeats must be at least 1")
 
+    if real and orchestrator_factory is None and not settings.llm.resolve()[0]:
+        raise ValueError("Real evaluation requires a configured API key; Mock fallback is not a formal result")
     factory = orchestrator_factory or _factory(real)
     run_paths: list[Path] = []
     for repeat_index in range(1, repeats + 1):

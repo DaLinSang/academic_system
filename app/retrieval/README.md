@@ -246,3 +246,7 @@ app/verification
 ```
 
 A 只需要通过 `Retriever` 接口调用本模块，不需要操作数据库或导入内部实现类。C 只读取 `Evidence`，使用其中的 `text`、`chunk_id`、`file_name` 和 `page_number` 进行 claim verification。
+
+## 指定文件与总结覆盖
+
+显式出现索引内文件名时，检索限定在这些文件。总结问题结合章节标题和多个主题查询获取不同页，普通查询仍受 top-k 控制；未知的显式 PDF 名称返回空并警告。详细验证和限制见 [B 测试记录](../../docs/b-ocr-coverage-test-2026-11-19.md)。此策略变化后应重跑正式评测。

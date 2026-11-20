@@ -54,3 +54,5 @@ uv run pytest tests/test_pdf_parser.py -q
 ```
 
 覆盖页码、空白页、多 chunk、参数校验、无效路径、解析失败、NUL 字符清理，以及 OCR 空页和缺少系统工具时的行为。
+
+2026-11-19 扫描件复验步骤与依赖安装状态见 [B 测试记录](../../docs/b-ocr-coverage-test-2026-11-19.md)。OCR 执行错误现在包含原始工具诊断（截断到500字符），语言包缺失时先检查 `tesseract --list-langs`。

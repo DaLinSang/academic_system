@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Protocol
 
@@ -211,6 +212,75 @@ class HybridRetriever:
         except Exception as exc:
             raise RetrievalError(f"Vector retrieval failed: {exc}") from exc
 
+    def _retrieve_documents(self, query: str, names: list[str], top_k: int) -> list[Evidence]:
+        """Bounded, source-scoped overview retrieval; never mix other PDFs."""
+        chunks = [c for c in self._bm25._chunks if c.file_name in names]
+        scoped = BM25Retriever(chunks)
+        overview = bool(re.search(r"总结|概括|综述|主要结论|研究目标|summari[sz]|overview", query, re.I))
+        queries = [query]
+        if overview:
+            queries += ["abstract introduction motivation objective 研究目标",
+                        "method approach 方法", "experiment results 实验结果",
+                        "conclusion discussion limitation 结论"]
+        rankings = [scoped.retrieve(q, top_k=max(top_k * 4, 20)) for q in queries]
+        try:
+            vector = self.embedder.embed(query)
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """SELECT chunk_id, 1 - (embedding <=> %s::vector) AS score
+                       FROM document_chunks WHERE file_name = ANY(%s)
+                       ORDER BY embedding <=> %s::vector LIMIT %s""",
+                    (vector, names, vector, max(top_k * 4, 20)),
+                ).fetchall()
+            by_id = {c.chunk_id: c for c in chunks}
+            vector_evidence = [Evidence(
+                chunk_id=key, document_id=by_id[key].document_id,
+                file_name=by_id[key].file_name, page_number=by_id[key].page_number,
+                text=by_id[key].text, score=float(score),
+                retrieval_method=RetrievalMethod.VECTOR,
+            ) for key, score in rows if key in by_id]
+            rankings.insert(0, vector_evidence)
+        except Exception as exc:
+            self.last_warning = f"Scoped vector retrieval unavailable; using BM25 only: {exc}"
+        selected: list[Evidence] = []
+        if overview:
+            # Prefer actual section headings over citations mentioning these words.
+            for heading in (r"abstract|摘要", r"introduction|引言", r"methods?|方法",
+                            r"results?|experimental results?|实验结果", r"conclusions?|结论"):
+                pattern = re.compile(r"^\s*(?:\d+(?:\.\d+)*[. ]*\s*)?(?:" + heading + r")\s*$", re.I | re.M)
+                for chunk in chunks:
+                    if pattern.search(chunk.text) and not any(
+                        e.document_id == chunk.document_id and e.page_number == chunk.page_number
+                        for e in selected
+                    ):
+                        selected.append(Evidence(
+                            chunk_id=chunk.chunk_id, document_id=chunk.document_id,
+                            file_name=chunk.file_name, page_number=chunk.page_number,
+                            text=chunk.text, score=0.0, retrieval_method=RetrievalMethod.BM25,
+                        ))
+                        break
+            selected = selected[:top_k]
+
+        seen = {e.chunk_id for e in selected}
+        pages = {(e.document_id, e.page_number) for e in selected}
+        if len(selected) >= top_k:
+            return selected
+        # Round-robin facets prevent the opening section from consuming the budget.
+        for rank in range(max((len(r) for r in rankings), default=0)):
+            for results in rankings:
+                if rank >= len(results):
+                    continue
+                item = results[rank]
+                page = (item.document_id, item.page_number)
+                if item.chunk_id in seen or (overview and page in pages):
+                    continue
+                selected.append(item)
+                seen.add(item.chunk_id)
+                pages.add(page)
+                if len(selected) >= top_k:
+                    return selected
+        return selected
+
     def retrieve(self, query: str, top_k: int = 5) -> list[Evidence]:
         """Return BM25 and vector results fused with reciprocal rank fusion."""
         self.last_warning = None
@@ -218,6 +288,14 @@ class HybridRetriever:
             return []
 
         self._load_bm25_index()
+        # Explicit filenames are source constraints, including on embedding failure.
+        names = {c.file_name for c in self._bm25._chunks}
+        selected = [name for name in names if name.casefold() in query.casefold()]
+        if not selected and re.search(r"[\w.-]+\.pdf\b", query, re.I):
+            self.last_warning = "Requested PDF is not indexed; no other document substituted"
+            return []
+        if selected:
+            return self._retrieve_documents(query, selected, top_k)
         bm25_results = self._bm25.retrieve(query, top_k=max(top_k * 4, 20))
         try:
             vector_results = self._vector_results(
