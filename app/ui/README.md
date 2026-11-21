@@ -19,7 +19,10 @@ uv run streamlit run streamlit_app.py
 - Mock / Real 链路切换
 - B1-B4 模式选择和 Top-K 设置
 - 长期记忆与 Claim Verification 开关
-- PDF 上传；Real 模式通过 Retriever 接口建立索引
+- 聊天输入区附近快速上传 PDF；Real 模式通过 Retriever 接口建立索引
+- 上传过程区分保存、文字层检查、扫描页 OCR、embedding、索引完成或失败
+- OCR 失败保留页码/工具诊断，并给出 Poppler、Tesseract 与语言包安装提示
+- 文档列表区分已保存未索引、已索引、失败可重试和本次启动状态未知
 - 可持久化的多轮聊天；创建、切换、重命名、删除和清空当前会话
 - 页面刷新或服务重启后通过 SessionStore 恢复完整回答状态
 - 文档页码引用与可点击网页引用
@@ -28,8 +31,10 @@ uv run streamlit run streamlit_app.py
 - Claim 的绿色、黄色、红色状态展示
 - Claim 置信度及对应文档页码或网页链接展示
 - 运行信息显示网页搜索未触发、成功条数或失败原因
-- 来源状态区分上传文档、网页、direct、无证据与检索失败
-- 记忆查看、编辑和删除；数据库不可用时友好降级
+- 来源状态区分未上传、已上传未索引、已索引但未命中、文档、网页、direct 与检索失败
+- 记忆区显示当前 user/session、本轮保存状态与已保存数量，并区分无记录和读取失败
+- 运行信息按 trace 展示路由、检索、搜索、生成、校验和记忆阶段及耗时
+- 记忆查看、编辑和删除；数据库不可用时明确显示读取失败
 - token、模型调用次数、成本、延迟和错误信息展示
 
 ## 测试
@@ -41,4 +46,5 @@ uv run ruff check app/ui streamlit_app.py tests/test_ui.py
 ```
 
 `app/ui/presenters.py` 保持为纯展示转换层，因此不启动浏览器也能测试 claim
-颜色映射、真实 evidence 页码解析、实际引用过滤、资料不足呈现和上传文件名安全处理。
+颜色映射、真实 evidence 页码解析、实际引用过滤、资料不足呈现、OCR 预检测、
+安全错误提示、来源状态和执行阶段摘要。

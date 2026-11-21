@@ -1,10 +1,10 @@
 # Member C Progress
 
-更新日期：2026-11-19
+更新日期：2026-11-21
 
-当前开发分支：`feat/c-web-multiturn-evaluation`
+当前开发分支：`feat/c-ocr-upload-memory-feedback`
 
-基线提交：`origin/main@730f6ad`（已包含 Web Search、SessionStore、多轮上下文与 C 侧 Web/会话 UI）
+基线提交：`origin/main@86ace0f`（已包含 OCR、Web Search、多轮来源约束与 C 侧评测/UI）
 
 ## 任务边界
 
@@ -20,6 +20,20 @@
 embedding、数据库或记忆存储。
 
 ## 已完成
+
+### OCR 上传与记忆反馈 UI（Issue #65）
+
+- 上传入口移动到聊天输入区附近，长对话滚动到底部即可快速导入或重试
+- 上传状态明确区分保存、文字层检查、扫描页 OCR、embedding、索引和失败
+- OCR 错误保留页码与工具诊断，不显示本机绝对路径，并给出安装/语言包提示
+- 文档区区分已保存未索引、已索引、失败可重试与启动后状态未知
+- 回答来源区分未上传、已上传未索引、已索引未命中、文档、网页和 direct
+- 记忆区显示当前 user/session、本轮写入状态和已保存数量；无记录与读取失败分开
+- 运行信息从 trace 汇总可核对阶段、耗时、证据/claim/记忆数量，不展示内部思考
+- 新增 OCR 预检测、错误脱敏、来源状态、阶段摘要测试及 Streamlit AppTest
+
+Issue #49 已由负责人在 Issue 评论中改由 A 实现；C 已合入的数据集、runner 和指标
+继续保留，后续只 review 团队冻结模型下的正式实验结果，不重复承担运行任务。
 
 ### Web 来源与会话 UI（Issue #42 / #46）
 

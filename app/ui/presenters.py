@@ -7,6 +7,7 @@ evidence, and upload behavior easy to test without starting a web server.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -17,12 +18,65 @@ from app.verification import is_insufficient_answer
 
 _UNSAFE_FILENAME = re.compile(r"[^A-Za-z0-9._\-\u4e00-\u9fff]+")
 _CITATION_INDEX = re.compile(r"\[(\d+)\]")
+_ABSOLUTE_PATH = re.compile(r"(?<![A-Za-z0-9_])(?:/[^\s:]+)+")
 
 _STATUS_VIEW = {
     ClaimStatus.SUPPORTED: ("supported", "success", "有证据支持"),
     ClaimStatus.PARTIALLY_SUPPORTED: ("partially_supported", "warning", "部分支持"),
     ClaimStatus.UNSUPPORTED: ("unsupported", "error", "证据不支持"),
 }
+
+
+@dataclass(frozen=True)
+class PdfTextProfile:
+    """Cheap pre-index inspection used only to explain OCR work in the UI."""
+
+    pages: int
+    text_pages: int
+    scanned_pages: tuple[int, ...]
+
+    @property
+    def needs_ocr(self) -> bool:
+        return bool(self.scanned_pages)
+
+
+def inspect_pdf_text(path: Path) -> PdfTextProfile:
+    """Identify pages without a text layer before the blocking index call.
+
+    The ingestion module remains the source of truth and performs the actual OCR.
+    This helper only gives the user an honest progress label.
+    """
+    reader = PdfReader(path)
+    scanned: list[int] = []
+    text_pages = 0
+    for page_number, page in enumerate(reader.pages, start=1):
+        text = (page.extract_text() or "").replace("\x00", "").strip()
+        if text:
+            text_pages += 1
+        else:
+            scanned.append(page_number)
+    return PdfTextProfile(
+        pages=len(reader.pages),
+        text_pages=text_pages,
+        scanned_pages=tuple(scanned),
+    )
+
+
+def upload_error_message(exc: Exception) -> str:
+    """Return actionable, bounded upload diagnostics without leaking local paths."""
+    detail = str(exc).strip() or type(exc).__name__
+    detail = _ABSOLUTE_PATH.sub("<本地文件>", detail)[:500]
+    lowered = detail.casefold()
+    if any(
+        marker in lowered
+        for marker in ("ocr", "tesseract", "pdftoppm", "searchable text")
+    ):
+        return (
+            f"{detail} 安装后可重试：macOS 执行 `brew install poppler tesseract`，"
+            "并用 `which pdftoppm tesseract` 检查命令是否可用；中文扫描件还需配置 "
+            "`PDF_OCR_LANG=eng+chi_sim`。"
+        )
+    return detail
 
 
 def verification_notice(state: AgentState) -> tuple[str, str] | None:
@@ -96,7 +150,12 @@ def web_search_summary(state: AgentState) -> tuple[str, str]:
     return ("info", "未触发网页搜索。")
 
 
-def source_status(state: AgentState) -> tuple[str, str, str]:
+def source_status(
+    state: AgentState,
+    *,
+    uploaded_documents: int | None = None,
+    indexed_documents: int | None = None,
+) -> tuple[str, str, str]:
     """Return a stable source-status key, UI level, and human-readable label."""
     if any(item.is_web for item in state.evidence):
         return ("web", "success", "本轮使用了网页证据。")
@@ -112,7 +171,89 @@ def source_status(state: AgentState) -> tuple[str, str, str]:
         return ("retrieval_failed", "error", "本轮检索失败，未取得可用证据。")
     if state.route and state.route.is_direct:
         return ("direct", "info", "本轮为 direct 回答，未使用外部证据。")
+    if uploaded_documents == 0:
+        return (
+            "no_documents",
+            "warning",
+            "尚未上传 PDF；本轮没有可检索的用户文档。",
+        )
+    if uploaded_documents and indexed_documents == 0:
+        return (
+            "not_indexed",
+            "warning",
+            "已上传 PDF，但尚未成功建立索引；请在上传区重试导入。",
+        )
+    if uploaded_documents and indexed_documents is None:
+        return (
+            "index_unknown",
+            "warning",
+            "已有上传文档，但本次启动无法确认索引状态；若检索不到可重新导入。",
+        )
+    if indexed_documents:
+        return (
+            "indexed_no_evidence",
+            "warning",
+            "已有已索引文档，但本轮没有检索到相关证据。",
+        )
     return ("no_evidence", "warning", "本轮执行了检索，但没有找到可用证据。")
+
+
+def pipeline_stage_presentations(state: AgentState) -> list[dict[str, Any]]:
+    """Summarize observable pipeline events without exposing model reasoning."""
+    labels = {
+        "memory_read": "读取长期记忆",
+        "router": "路由决策",
+        "plan": "任务规划",
+        "retrieval": "文档检索",
+        "web_search": "网页搜索",
+        "generate": "生成回答",
+        "verify": "Claim 校验",
+        "replan": "补充规划",
+        "memory_write": "保存长期记忆",
+    }
+    rows: list[dict[str, Any]] = []
+    for stage, label in labels.items():
+        events = [event for event in state.trace if event.stage == stage]
+        if not events:
+            continue
+        timing = sum(
+            event.latency_ms for event in events if event.event == "timing"
+        )
+        if any(event.event == "error" for event in events):
+            status = "失败"
+        elif events[-1].event == "skip":
+            status = "跳过"
+        elif any(event.event in {"end", "timing"} for event in events):
+            status = "完成"
+        else:
+            status = "已记录"
+
+        detail = ""
+        end_events = [event for event in events if event.event == "end"]
+        if end_events:
+            end = end_events[-1].detail
+            if stage == "retrieval":
+                detail = f"证据 {int(end.get('evidence', 0) or 0)} 条"
+                if end.get("degraded"):
+                    detail += "（已降级）"
+            elif stage == "web_search":
+                detail = f"网页证据 {int(end.get('count', 0) or 0)} 条"
+            elif stage == "verify":
+                detail = f"claims {int(end.get('claims', 0) or 0)} 条"
+            elif stage == "memory_read":
+                detail = f"命中 {int(end.get('hits', 0) or 0)} 条"
+            elif stage == "memory_write":
+                detail = f"保存 {int(end.get('stored', 0) or 0)} 条"
+        rows.append(
+            {
+                "stage": stage,
+                "label": label,
+                "status": status,
+                "latency_ms": round(timing, 2),
+                "detail": detail,
+            }
+        )
+    return rows
 
 
 def memory_write_summary(state: AgentState) -> tuple[str, str]:

@@ -14,10 +14,13 @@ from app.core.types import (
 )
 from app.ui import (
     claim_presentations,
+    inspect_pdf_text,
     memory_write_summary,
     pdf_page_count,
+    pipeline_stage_presentations,
     safe_pdf_name,
     source_status,
+    upload_error_message,
     used_citations,
     verification_notice,
     web_search_summary,
@@ -47,6 +50,34 @@ def test_pdf_page_count_handles_valid_and_invalid_files(tmp_path) -> None:
 
     assert pdf_page_count(valid) == 2
     assert pdf_page_count(invalid) is None
+
+
+def test_pdf_text_profile_marks_blank_pages_for_ocr(tmp_path) -> None:
+    scanned = tmp_path / "scan.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=100, height=100)
+    writer.add_blank_page(width=100, height=100)
+    with scanned.open("wb") as stream:
+        writer.write(stream)
+
+    profile = inspect_pdf_text(scanned)
+
+    assert profile.pages == 2
+    assert profile.text_pages == 0
+    assert profile.scanned_pages == (1, 2)
+    assert profile.needs_ocr is True
+
+
+def test_upload_error_message_keeps_page_diagnostic_and_adds_ocr_fix() -> None:
+    message = upload_error_message(
+        RuntimeError(
+            "OCR failed on page 3 of /Users/private/report.pdf: tesseract missing"
+        )
+    )
+
+    assert "page 3" in message
+    assert "/Users/private" not in message
+    assert "brew install poppler tesseract" in message
 
 
 @pytest.mark.parametrize(
@@ -306,6 +337,47 @@ def test_source_status_distinguishes_web_document_direct_and_failure() -> None:
 
     failed = AgentState(question="q", errors=["retrieval: offline"])
     assert source_status(failed)[0] == "retrieval_failed"
+
+
+def test_source_status_distinguishes_document_library_states() -> None:
+    state = AgentState(question="q")
+    state.route = RouteDecision(
+        route=RouteType.DOCUMENT_RETRIEVAL, need_retrieval=True
+    )
+
+    assert source_status(
+        state, uploaded_documents=0, indexed_documents=0
+    )[0] == "no_documents"
+    assert source_status(
+        state, uploaded_documents=1, indexed_documents=0
+    )[0] == "not_indexed"
+    assert source_status(
+        state, uploaded_documents=2, indexed_documents=1
+    )[0] == "indexed_no_evidence"
+    assert source_status(
+        state, uploaded_documents=1, indexed_documents=None
+    )[0] == "index_unknown"
+
+
+def test_pipeline_stage_presentations_reports_latency_counts_and_failure() -> None:
+    state = AgentState(question="q")
+    state.log("retrieval", "end", evidence=3, degraded=True)
+    state.log("retrieval", "timing", 125.4)
+    state.log("web_search", "error", error="offline")
+    state.log("verify", "end", claims=2, unsupported=1)
+    state.log("verify", "timing", 20.0)
+
+    rows = {row["stage"]: row for row in pipeline_stage_presentations(state)}
+
+    assert rows["retrieval"] == {
+        "stage": "retrieval",
+        "label": "文档检索",
+        "status": "完成",
+        "latency_ms": 125.4,
+        "detail": "证据 3 条（已降级）",
+    }
+    assert rows["web_search"]["status"] == "失败"
+    assert rows["verify"]["detail"] == "claims 2 条"
 
 
 def test_verification_warning_does_not_hide_valid_draft_citations() -> None:
