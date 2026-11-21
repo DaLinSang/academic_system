@@ -690,9 +690,38 @@ class Orchestrator:
             "以上回答未使用网页来源。"
         )
 
+    @staticmethod
+    def _memory_write_note(state: AgentState) -> str:
+        """模型声称"已记录"但实际没写入时，追加纠正说明（Issue #70）。
+
+        写入发生在回答生成之后，模型可能先说"已记录"再因解析失败存 0 条。
+        这里以 memory_write 的实际结果为准，避免承诺与数据库事实相反。
+        """
+        if not state.enable_memory:
+            return ""
+        answer = state.draft_answer or ""
+        # 只有模型确实承诺了保存才需要纠正
+        claimed = any(w in answer for w in ("已记录", "已保存", "已经记住", "记住了"))
+        if not claimed:
+            return ""
+        end = next(
+            (e for e in state.trace if e.stage == "memory_write" and e.event == "end"),
+            None,
+        )
+        if end is None or int(end.detail.get("stored", 0) or 0) > 0:
+            return ""
+        stats = next(
+            (e for e in state.trace if e.stage == "memory_write" and e.event == "stats"),
+            None,
+        )
+        reason = stats.detail.get("skipped") if stats else None
+        suffix = f"（原因：{reason}）" if reason else ""
+        return f"\n\nℹ️ 更正：本轮记忆实际未保存{suffix}；请勿据此认为偏好已长期记住。"
+
     def _compose_final(self, state: AgentState) -> str:
         body = state.draft_answer or "抱歉，本次没有生成有效回答。"
         body += self._web_search_note(state)
+        body += self._memory_write_note(state)
 
         # 没有检索到任何证据时，答案本身已经是"无证据"声明，
         # 再列一遍 unsupported 只会重复报警，反而降低可读性。
