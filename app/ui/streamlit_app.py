@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.core.types import AgentState, ConversationTurn
 from app.ui.presenters import (
     claim_presentations,
+    document_status_presentation,
     inspect_pdf_text,
     memory_write_summary,
     pdf_page_count,
@@ -140,14 +141,28 @@ def _document_statuses() -> dict[str, dict[str, Any]]:
     return st.session_state.setdefault("document_index_status", {})
 
 
-def _document_counts() -> tuple[int, int | None]:
+def _persistent_index_statuses(
+    orch: Any, runtime: str
+) -> tuple[dict[str, dict[str, Any]], str | None]:
+    if runtime != "Real":
+        return {}, None
+    list_documents = getattr(orch.retriever, "list_indexed_documents", None)
+    if not callable(list_documents):
+        return {}, "当前 Retriever 不提供持久化索引状态查询。"
+    try:
+        items = list_documents()
+    except Exception as exc:  # noqa: BLE001 - keep the UI available
+        return {}, f"{type(exc).__name__}: {exc}"
+    return {str(item["file_name"]): dict(item) for item in items}, None
+
+
+def _document_counts(
+    persisted: dict[str, dict[str, Any]], runtime: str
+) -> tuple[int, int | None]:
     pdfs = list(settings.runtime.data_raw_dir.glob("*.pdf"))
-    statuses = _document_statuses()
-    indexed = sum(
-        1 for path in pdfs if statuses.get(path.name, {}).get("status") == "indexed"
-    )
-    has_unknown = any(path.name not in statuses for path in pdfs)
-    return len(pdfs), None if has_unknown and indexed == 0 else indexed
+    if runtime != "Real":
+        return len(pdfs), 0
+    return len(pdfs), len(persisted)
 
 
 def _render_upload(orch: Any, runtime: str) -> None:
@@ -166,11 +181,13 @@ def _render_upload(orch: Any, runtime: str) -> None:
     statuses = _document_statuses()
     display_name = safe_pdf_name(uploaded.name)
     path: Path | None = None
+    stage = "保存文件"
     with st.status("正在保存 PDF...", expanded=True) as progress:
         try:
             path = _save_upload(uploaded)
             statuses[path.name] = {"status": "saved", "chunks": 0}
             progress.write("✓ 文件已保存，正在检查文字层。")
+            stage = "检查 PDF 文字层"
             profile = inspect_pdf_text(path)
             if profile.needs_ocr:
                 pages = "、".join(str(page) for page in profile.scanned_pages)
@@ -184,6 +201,7 @@ def _render_upload(orch: Any, runtime: str) -> None:
                 progress.write(f"✓ {profile.pages} 页均检测到可搜索文字。")
 
             if runtime == "Real":
+                stage = "OCR / embedding / 数据库索引"
                 progress.write("正在写入向量索引并刷新 BM25 全量语料。")
                 chunks = orch.retriever.index_document(str(path))
                 statuses[path.name] = {
@@ -210,31 +228,38 @@ def _render_upload(orch: Any, runtime: str) -> None:
                 "status": "failed",
                 "chunks": 0,
                 "error": upload_error_message(exc),
+                "error_type": type(exc).__name__,
+                "stage": stage,
             }
             progress.update(label=f"{name} 导入失败", state="error", expanded=True)
             st.error(f"文档未建立索引：{upload_error_message(exc)}")
             st.caption("文件仍保存在上传目录；修复依赖后可点击同一按钮重试。")
 
 
-def _render_documents() -> None:
+def _render_documents(
+    persisted: dict[str, dict[str, Any]], index_error: str | None
+) -> None:
     st.subheader("文档状态")
     statuses = _document_statuses()
-    pdfs = sorted(settings.runtime.data_raw_dir.glob("*.pdf"))
-    if pdfs:
-        for path in pdfs:
-            pages = pdf_page_count(path)
-            page_text = f" · {pages} 页" if pages is not None else " · 页数不可读"
-            item = statuses.get(path.name, {})
-            status = item.get("status", "unknown")
-            if status == "indexed":
-                label = f"已索引 · {int(item.get('chunks', 0))} chunks"
-            elif status == "failed":
-                label = "导入失败 · 可重试"
-            elif status == "saved":
-                label = "已保存 · 未建立索引"
-            else:
-                label = "文件已存在 · 本次启动尚未确认索引"
-            st.caption(f"• {path.name}{page_text} · {label}")
+    paths = {
+        path.name: path
+        for path in settings.runtime.data_raw_dir.glob("*.pdf")
+    }
+    names = sorted(set(paths) | set(persisted))
+    if index_error:
+        st.warning(f"无法读取数据库索引状态：{index_error}")
+    if names:
+        for name in names:
+            path = paths.get(name)
+            pages = pdf_page_count(path) if path is not None else None
+            row = document_status_presentation(
+                pages=pages,
+                attempt=statuses.get(name),
+                persisted=persisted.get(name),
+            )
+            st.caption(f"• {name} · {row['label']}")
+            if row["detail"]:
+                st.caption(f"  {row['detail']}")
     else:
         st.caption("尚未上传 PDF。")
 
@@ -407,7 +432,12 @@ def main() -> None:
     orch = _get_orchestrator(runtime, top_k)
     if st.session_state.get("loaded_session") != (user_id, session_id):
         _restore_history(store, user_id, session_id)
-    uploaded_documents, indexed_documents = _document_counts()
+    persisted_indexes, index_status_error = _persistent_index_statuses(
+        orch, runtime
+    )
+    uploaded_documents, indexed_documents = _document_counts(
+        persisted_indexes, runtime
+    )
 
     chat_col, info_col = st.columns([2, 1])
     with chat_col:
@@ -466,7 +496,7 @@ def main() -> None:
                 st.error(f"运行失败：{type(exc).__name__}: {exc}")
 
     with info_col:
-        _render_documents()
+        _render_documents(persisted_indexes, index_status_error)
         latest_state = (
             st.session_state.history[-1]["state"]
             if st.session_state.history

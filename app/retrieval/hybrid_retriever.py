@@ -192,6 +192,47 @@ class HybridRetriever:
         self._bm25_loaded = False
         return len(chunks)
 
+    def list_indexed_documents(self) -> list[dict[str, object]]:
+        """Return read-only metadata for documents stored in PostgreSQL.
+
+        This optional concrete capability avoids changing the shared Retriever
+        Protocol while allowing the UI to survive Streamlit session resets.
+        """
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT file_name, COUNT(*) AS chunk_count,
+                           COUNT(DISTINCT page_number) AS page_count,
+                           MIN(page_number) AS first_page,
+                           MAX(page_number) AS last_page,
+                           MAX(created_at) AS indexed_at
+                    FROM document_chunks
+                    GROUP BY file_name
+                    ORDER BY file_name
+                    """
+                ).fetchall()
+        except RetrievalError:
+            raise
+        except Exception as exc:
+            raise RetrievalError(
+                f"Failed to list indexed documents: {exc}"
+            ) from exc
+
+        return [
+            {
+                "file_name": str(row[0]),
+                "chunks": int(row[1]),
+                "page_count": int(row[2]),
+                "first_page": int(row[3]),
+                "last_page": int(row[4]),
+                "indexed_at": (
+                    row[5].isoformat() if row[5] is not None else None
+                ),
+            }
+            for row in rows
+        ]
+
     def _vector_results(
         self,
         query_embedding: list[float],

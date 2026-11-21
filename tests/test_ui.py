@@ -14,6 +14,7 @@ from app.core.types import (
 )
 from app.ui import (
     claim_presentations,
+    document_status_presentation,
     inspect_pdf_text,
     memory_write_summary,
     pdf_page_count,
@@ -78,6 +79,56 @@ def test_upload_error_message_keeps_page_diagnostic_and_adds_ocr_fix() -> None:
     assert "page 3" in message
     assert "/Users/private" not in message
     assert "brew install poppler tesseract" in message
+
+
+def test_failed_reimport_keeps_old_index_visible() -> None:
+    row = document_status_presentation(
+        pages=1,
+        attempt={
+            "status": "failed",
+            "stage": "OCR / embedding / 数据库索引",
+            "error_type": "RetrievalError",
+            "error": "Embedding service failed",
+        },
+        persisted={"chunks": 7, "page_count": 1},
+    )
+
+    assert row["level"] == "warning"
+    assert "旧索引仍可用" in row["label"]
+    assert "不代表当前上传文件已入库" in row["detail"]
+
+
+def test_first_failed_import_reports_no_usable_index() -> None:
+    row = document_status_presentation(
+        pages=2,
+        attempt={
+            "status": "failed",
+            "stage": "检查 PDF 文字层",
+            "error_type": "PdfStreamError",
+            "error": "broken file",
+        },
+        persisted=None,
+    )
+
+    assert row["level"] == "error"
+    assert "无可用索引" in row["label"]
+    assert "检查 PDF 文字层" in row["detail"]
+
+
+def test_persisted_index_survives_missing_session_attempt() -> None:
+    row = document_status_presentation(
+        pages=4,
+        attempt=None,
+        persisted={
+            "chunks": 12,
+            "page_count": 4,
+            "indexed_at": "2026-11-21T09:00:00+00:00",
+        },
+    )
+
+    assert row["level"] == "success"
+    assert row["label"] == "数据库索引可用 · 12 chunks · 4 页"
+    assert "2026-11-21" in row["detail"]
 
 
 @pytest.mark.parametrize(

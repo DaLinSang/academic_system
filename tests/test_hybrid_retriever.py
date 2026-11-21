@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from app.core.errors import IngestionError, RetrievalError
@@ -149,6 +151,29 @@ def test_index_document_rejects_image_pdf_without_ocr(monkeypatch) -> None:
         retriever.index_document("scanned.pdf")
 
 
+def test_list_indexed_documents_returns_durable_metadata(monkeypatch) -> None:
+    retriever = HybridRetriever(embedder=FakeEmbedder())
+    indexed_at = datetime(2026, 11, 21, 9, 0, tzinfo=UTC)
+    monkeypatch.setattr(
+        retriever,
+        "_connect",
+        lambda: FakeDocumentMetadataConnection(
+            [("demo.pdf", 7, 2, 1, 2, indexed_at)]
+        ),
+    )
+
+    assert retriever.list_indexed_documents() == [
+        {
+            "file_name": "demo.pdf",
+            "chunks": 7,
+            "page_count": 2,
+            "first_page": 1,
+            "last_page": 2,
+            "indexed_at": "2026-11-21T09:00:00+00:00",
+        }
+    ]
+
+
 class FakeEvidenceConnection:
     """Minimal connection double for loading vector-only evidence."""
 
@@ -257,3 +282,21 @@ class FakeVectorCursor:
 
     def fetchall(self) -> list[tuple[str, float]]:
         return []
+
+
+class FakeDocumentMetadataConnection:
+    def __init__(self, rows: list[tuple[object, ...]]) -> None:
+        self.rows = rows
+
+    def __enter__(self) -> FakeDocumentMetadataConnection:
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        return None
+
+    def execute(self, query: str) -> FakeDocumentMetadataConnection:
+        assert "GROUP BY file_name" in query
+        return self
+
+    def fetchall(self) -> list[tuple[object, ...]]:
+        return self.rows
