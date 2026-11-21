@@ -299,6 +299,11 @@ class Orchestrator:
         决策与执行严格分离：`WebSearchPolicy` 不碰网络，`WebSearchTool` 不做判断。
         这样 RQ1 能单独统计"该搜没搜"和"不该搜却搜了"。
         """
+        if any(r.metadata.get("clarification") for r in state.tool_results
+               if r.tool_name == "retrieval"):
+            state.log("web_search", "skipped", reason="document_source_needs_clarification")
+            return
+
         decision = self.web_search_policy.decide(
             state.question,
             need_web_search=bool(route.need_web_search),
@@ -352,6 +357,14 @@ class Orchestrator:
         missing_files = [f for f in original_files if f.casefold() not in enriched.casefold()]
         if missing_files:
             enriched = f"{' '.join(missing_files)} {enriched}"
+
+        # Numbered lecture titles are source constraints too (Issue #72).
+        # Keep them when a planner reduces "Lecture6 的 language" to "language".
+        titles = re.findall(r"(?<![a-z0-9])lecture\s*0*\d+(?![a-z0-9])", state.question, re.I)
+        course_codes = re.findall(r"\b[a-z]{2,}\d{3,}[a-z]?\b", state.question, re.I)
+        for title in titles + course_codes:
+            if title.casefold() not in enriched.casefold():
+                enriched = f"{title} {enriched}"
 
         # 2) 短指代：补最近两轮用户问题（不取助手输出）
         lowered = enriched.casefold()
@@ -445,7 +458,8 @@ class Orchestrator:
                         success=True,
                         output={"count": len(found)},
                         latency_ms=latency,
-                        metadata={"query": query, "step_id": step_id},
+                        metadata={"query": query, "step_id": step_id,
+                                  "clarification": getattr(self.retriever, "last_clarification", None)},
                     )
                 )
                 if step is not None:
