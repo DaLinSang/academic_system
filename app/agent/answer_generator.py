@@ -109,7 +109,43 @@ class LLMAnswerGenerator:
     # ------------------------------------------------------------------ #
     # 路径 1：direct / 无证据
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _web_required_but_failed(state: AgentState) -> bool:
+        """本轮明确决定联网、但一条网页证据都没拿到（Issue #71）。
+
+        此时不能让模型凭自身知识编造"根据官网..."的事实性回答——
+        联网失败不等于可以退化成直接回答。由 trace 判断，独立于 route。
+        """
+        decisions = [
+            e for e in state.trace
+            if e.stage == "web_search" and e.event == "decision"
+        ]
+        if not decisions or not any(
+            e.detail.get("should_search") for e in decisions
+        ):
+            return False
+        # 只要有任何网页证据（url 非空）就不算失败
+        return not any(getattr(ev, "url", None) for ev in state.evidence)
+
     def _generate_without_evidence(self, state: AgentState) -> str:
+        if self._web_required_but_failed(state):
+            warning = next(
+                (
+                    e.detail.get("warning")
+                    for e in state.trace
+                    if e.stage == "web_search" and e.event == "end"
+                    and e.detail.get("warning")
+                ),
+                None,
+            )
+            state.log("generate", "web_search_failed", warning=warning)
+            suffix = f"（原因：{warning}）" if warning else ""
+            return (
+                "本轮已尝试联网搜索，但没有取得可用的网页结果，"
+                f"因此不能提供所要求的官网介绍或真实链接{suffix}。"
+                "请检查网络/代理后重试，或稍后再试。"
+            )
+
         is_direct = state.route is not None and state.route.is_direct
 
         if not is_direct:
@@ -167,9 +203,15 @@ class LLMAnswerGenerator:
             text = re.sub(r"\s+", " ", item.text).strip()
             if len(text) > self.max_chars_per_evidence:
                 text = text[: self.max_chars_per_evidence].rstrip() + "…"
-            blocks.append(
-                f"[{index}] 来源：{item.file_name} 第 {item.page_number} 页\n{text}"
-            )
+            # Issue #71：网页证据必须把真实 URL 送进 prompt，模型才不会编造链接；
+            # 文档证据保持"文件名 第 N 页"格式，不影响既有 citation 口径。
+            if getattr(item, "url", None):
+                label = getattr(item, "title", None) or item.file_name
+                blocks.append(f"[{index}] 网页：{label}\nURL：{item.url}\n{text}")
+            else:
+                blocks.append(
+                    f"[{index}] 来源：{item.file_name} 第 {item.page_number} 页\n{text}"
+                )
         return "\n\n".join(blocks)
 
     def _format_preferences(self, state: AgentState) -> str:

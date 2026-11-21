@@ -327,12 +327,15 @@ class Orchestrator:
 
             state.add_evidence(found)
             warning = getattr(self.web_search_tool, "last_warning", None)
+            diagnostics = getattr(self.web_search_tool, "last_diagnostics", None)
             state.log(
                 "web_search",
                 "end",
                 count=len(found),
                 total_evidence=len(state.evidence),
                 warning=warning,
+                # Issue #71：结构化诊断（后端/类别/HTTP 状态），供报告与 UI 定位
+                diagnostics=list(diagnostics) if isinstance(diagnostics, list) else [],
             )
 
     @staticmethod
@@ -673,6 +676,11 @@ class Orchestrator:
             None,
         )
         if end is None:
+            return ""
+        # Issue #71：生成阶段已在 web 失败时给出明确说明，不再重复追加
+        if not any(getattr(ev, "url", None) for ev in state.evidence) and any(
+            e.event == "web_search_failed" for e in state.trace
+        ):
             return ""
         count = int(end.detail.get("count", 0) or 0)
         web_chunks = {e.chunk_id for e in state.evidence if e.url}

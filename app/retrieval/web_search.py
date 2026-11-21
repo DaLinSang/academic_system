@@ -248,11 +248,14 @@ class WebSearchTool:
         self.fetch_pages = fetch_pages
         self.max_page_chars = max_page_chars
         self.last_warning: str | None = None
+        # Issue #71：结构化诊断（后端 / 类别 / HTTP 状态），不含查询文本
+        self.last_diagnostics: list[dict[str, object]] = []
 
     # ------------------------------------------------------------------ #
     def search(self, query: str, top_k: int = 5) -> list[Evidence]:
         """失败返回空列表并写 last_warning，绝不抛异常打断回答。"""
         self.last_warning = None
+        self.last_diagnostics = []
         if top_k <= 0 or not query.strip():
             return []
 
@@ -260,6 +263,7 @@ class WebSearchTool:
         failures: list[str] = []
         for endpoint in _SEARCH_BACKENDS:
             backend = "ddg" if "duckduckgo" in endpoint else "bing"
+            response = None  # Issue #71：捕获失败时的 HTTP 状态用于诊断
             try:
                 _assert_safe_url(endpoint)
                 # Bing 指定英文界面，避免中文区域词污染学术查询
@@ -273,11 +277,26 @@ class WebSearchTool:
                 parser.feed(response.text)
                 results = parser.results[:top_k]
             except Exception as exc:  # noqa: BLE001 - 网络异常类型太多
-                failures.append(f"{backend}: {type(exc).__name__}")
+                kind = type(exc).__name__
+                failures.append(f"{backend}: {kind}")
+                # 只记类别与状态码，绝不记查询词或响应正文
+                self.last_diagnostics.append({
+                    "backend": backend,
+                    "kind": kind,
+                    "http_status": getattr(response, "status_code", None),
+                })
                 continue
             if results:
+                self.last_diagnostics.append({
+                    "backend": backend, "kind": "ok", "count": len(results)
+                })
                 break
             failures.append(f"{backend}: 未返回结果")
+            self.last_diagnostics.append({
+                "backend": backend,
+                "kind": "zero_results",
+                "http_status": response.status_code if response is not None else None,
+            })
 
         if not results:
             self.last_warning = "网页搜索不可用：" + "; ".join(failures)
