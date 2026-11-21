@@ -79,6 +79,63 @@ def upload_error_message(exc: Exception) -> str:
     return detail
 
 
+def document_status_presentation(
+    *,
+    pages: int | None,
+    attempt: dict[str, Any] | None,
+    persisted: dict[str, Any] | None,
+) -> dict[str, str]:
+    """Merge the latest import attempt with the durable database state."""
+    attempt = attempt or {}
+    persisted = persisted or {}
+    page_text = f"{pages} 页" if pages is not None else "页数不可读"
+    chunks = int(persisted.get("chunks", 0) or 0)
+    db_pages = int(persisted.get("page_count", 0) or 0)
+    status = str(attempt.get("status", "unknown"))
+
+    if status == "failed":
+        error_type = str(attempt.get("error_type") or "导入错误")
+        stage = str(attempt.get("stage") or "未知阶段")
+        error = str(attempt.get("error") or "未记录详细原因")
+        if chunks:
+            return {
+                "level": "warning",
+                "label": (
+                    f"本次重导入失败；旧索引仍可用 · {chunks} chunks"
+                    f" · {db_pages} 页"
+                ),
+                "detail": (
+                    f"失败阶段：{stage} · {error_type}: {error}。"
+                    "数据库内容来自此前成功导入，不代表当前上传文件已入库。"
+                ),
+            }
+        return {
+            "level": "error",
+            "label": "本次导入失败；数据库中无可用索引",
+            "detail": f"失败阶段：{stage} · {error_type}: {error}",
+        }
+
+    if chunks:
+        indexed_at = str(persisted.get("indexed_at") or "").strip()
+        suffix = f" · 索引记录 {indexed_at}" if indexed_at else ""
+        return {
+            "level": "success",
+            "label": f"数据库索引可用 · {chunks} chunks · {db_pages} 页",
+            "detail": f"本地文件：{page_text}{suffix}",
+        }
+    if status == "saved":
+        return {
+            "level": "info",
+            "label": "文件已保存 · 尚未建立索引",
+            "detail": f"本地文件：{page_text}",
+        }
+    return {
+        "level": "info",
+        "label": "文件存在 · 数据库中无可用索引",
+        "detail": f"本地文件：{page_text}",
+    }
+
+
 def verification_notice(state: AgentState) -> tuple[str, str] | None:
     """Explain why no claim result exists without implying factual error."""
     if state.claims or not state.enable_verification:

@@ -2,6 +2,7 @@
 
 from app.ui.presenters import (
     claim_presentations,
+    document_status_presentation,
     inspect_pdf_text,
     memory_write_summary,
     pdf_page_count,
@@ -16,6 +17,7 @@ from app.ui.presenters import (
 
 __all__ = [
     "claim_presentations",
+    "document_status_presentation",
     "inspect_pdf_text",
     "memory_write_summary",
     "pdf_page_count",
