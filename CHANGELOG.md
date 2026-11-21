@@ -16,6 +16,7 @@
 ### Added
 
 - 测试 `tests/test_web_zero_result_71.py`（6 项）：零结果阻断、不误伤普通问答、结构化诊断不泄漏查询词（Issue #71）
+- 测试 `tests/test_memory_json_contract_70.py`（13 项）：对象/数组兼容、可诊断解析失败、敏感过滤、已记录纠错（Issue #70）
 - 测试 `tests/test_planned_source_64.py`（5 项）：Planner 子查询继承 PDF 来源、指代只用用户问题、trace 记录来源约束（Issue #64）
 - 测试 `tests/test_web_search_regression_66.py`（4 项）：联网但未支撑答案时如实说明，区分工具未调用/失败/不相关（Issue #66）
 - 测试 `tests/test_session_boundary_a32.py`（7 项）：SessionStore/RunLogger 边界、恢复后 turn_index 连续、会话/用户隔离、脱敏（Issue #32 A 部分）
@@ -100,6 +101,8 @@
 - `app/agent/answer_generator.py`：联网已决策但零网页证据时不调 LLM 编造事实；网页证据 prompt 显示真实 URL 而非'第 0 页'（Issue #71）
 - `app/retrieval/web_search.py`：新增 `last_diagnostics`（后端/失败类别/HTTP 状态，不含查询词）（Issue #71）
 - `app/agent/orchestrator.py`：web/end trace 写入结构化诊断；避免与生成阶段失败说明重复（Issue #71）
+- `app/memory/manager.py`：结构化输出统一为 `{"memories":[...]}`，兼容单项对象与旧顶层数组；解析失败记 `parse_detail`（Issue #70）
+- `app/agent/orchestrator.py`：模型声称"已记录"但实际 stored=0 时，答案追加纠正说明（Issue #70）
 - `app/agent/orchestrator.py`：新增 `_enrich_query` 统一给检索查询补文件名来源与历史指代；每个子查询写入 retrieval/query trace（Issue #64）
 - `app/routing/router.py`：提示词补 need_web_search 判断规则（官网/最新/给链接 → true），示例 JSON 补字段（Issue #66）
 - `app/retrieval/web_search.py`：Bing 的 /ck/a 跳转链接解码成真实 URL，用户拿到可点击来源（Issue #66）

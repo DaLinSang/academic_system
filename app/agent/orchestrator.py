@@ -299,6 +299,11 @@ class Orchestrator:
         决策与执行严格分离：`WebSearchPolicy` 不碰网络，`WebSearchTool` 不做判断。
         这样 RQ1 能单独统计"该搜没搜"和"不该搜却搜了"。
         """
+        if any(r.metadata.get("clarification") for r in state.tool_results
+               if r.tool_name == "retrieval"):
+            state.log("web_search", "skipped", reason="document_source_needs_clarification")
+            return
+
         decision = self.web_search_policy.decide(
             state.question,
             need_web_search=bool(route.need_web_search),
@@ -355,6 +360,14 @@ class Orchestrator:
         missing_files = [f for f in original_files if f.casefold() not in enriched.casefold()]
         if missing_files:
             enriched = f"{' '.join(missing_files)} {enriched}"
+
+        # Numbered lecture titles are source constraints too (Issue #72).
+        # Keep them when a planner reduces "Lecture6 的 language" to "language".
+        titles = re.findall(r"(?<![a-z0-9])lecture\s*0*\d+(?![a-z0-9])", state.question, re.I)
+        course_codes = re.findall(r"\b[a-z]{2,}\d{3,}[a-z]?\b", state.question, re.I)
+        for title in titles + course_codes:
+            if title.casefold() not in enriched.casefold():
+                enriched = f"{title} {enriched}"
 
         # 2) 短指代：补最近两轮用户问题（不取助手输出）
         lowered = enriched.casefold()
@@ -448,7 +461,8 @@ class Orchestrator:
                         success=True,
                         output={"count": len(found)},
                         latency_ms=latency,
-                        metadata={"query": query, "step_id": step_id},
+                        metadata={"query": query, "step_id": step_id,
+                                  "clarification": getattr(self.retriever, "last_clarification", None)},
                     )
                 )
                 if step is not None:
@@ -698,9 +712,38 @@ class Orchestrator:
             "以上回答未使用网页来源。"
         )
 
+    @staticmethod
+    def _memory_write_note(state: AgentState) -> str:
+        """模型声称"已记录"但实际没写入时，追加纠正说明（Issue #70）。
+
+        写入发生在回答生成之后，模型可能先说"已记录"再因解析失败存 0 条。
+        这里以 memory_write 的实际结果为准，避免承诺与数据库事实相反。
+        """
+        if not state.enable_memory:
+            return ""
+        answer = state.draft_answer or ""
+        # 只有模型确实承诺了保存才需要纠正
+        claimed = any(w in answer for w in ("已记录", "已保存", "已经记住", "记住了"))
+        if not claimed:
+            return ""
+        end = next(
+            (e for e in state.trace if e.stage == "memory_write" and e.event == "end"),
+            None,
+        )
+        if end is None or int(end.detail.get("stored", 0) or 0) > 0:
+            return ""
+        stats = next(
+            (e for e in state.trace if e.stage == "memory_write" and e.event == "stats"),
+            None,
+        )
+        reason = stats.detail.get("skipped") if stats else None
+        suffix = f"（原因：{reason}）" if reason else ""
+        return f"\n\nℹ️ 更正：本轮记忆实际未保存{suffix}；请勿据此认为偏好已长期记住。"
+
     def _compose_final(self, state: AgentState) -> str:
         body = state.draft_answer or "抱歉，本次没有生成有效回答。"
         body += self._web_search_note(state)
+        body += self._memory_write_note(state)
 
         # 没有检索到任何证据时，答案本身已经是"无证据"声明，
         # 再列一遍 unsupported 只会重复报警，反而降低可读性。

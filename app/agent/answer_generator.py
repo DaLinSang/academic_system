@@ -102,6 +102,13 @@ class LLMAnswerGenerator:
 
     # ------------------------------------------------------------------ #
     def generate(self, state: AgentState) -> str:
+        clarifications = list(dict.fromkeys(
+            r.metadata["clarification"] for r in state.tool_results
+            if r.tool_name == "retrieval" and r.metadata.get("clarification")
+        ))
+        if clarifications:
+            state.log("generate", "source_clarification", count=len(clarifications))
+            return "\n".join(clarifications)
         if not state.evidence:
             return self._generate_without_evidence(state)
         return self._generate_from_evidence(state)

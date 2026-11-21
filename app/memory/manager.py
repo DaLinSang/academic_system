@@ -38,7 +38,7 @@ import re
 from typing import Any
 
 from app.core.interfaces import LLM
-from app.core.json_utils import extract_json_array
+from app.core.json_utils import extract_json_array, extract_json_object
 from app.core.types import MemoryCandidate, MemoryItem, MemoryTier, Usage
 
 __all__ = ["LLMMemoryManager", "find_sensitive", "looks_memorable"]
@@ -89,7 +89,7 @@ _SENSITIVE_KEYWORDS = ("密码", "口令", "身份证", "银行卡", "住址", "
 
 _MAX_CONTENT_CHARS = 120
 
-_SYSTEM_PROMPT = """你是学术助手的记忆管理器。判断这段对话里有没有值得长期保存的稳定信息，输出 json 数组。
+_SYSTEM_PROMPT = """你是学术助手的记忆管理器。判断这段对话里有没有值得长期保存的稳定信息，输出 json 对象。
 
 三层记忆：
 - profile：用户背景（专业、研究方向、身份、已修课程）
@@ -113,32 +113,82 @@ content 的要求：一句中文陈述，主语是"用户"，不超过 60 字，
 importance：0 到 1 的小数，信息越稳定、越重要就越高。
 reason：一句中文，说明为什么值得保存，会写进实验日志。
 
-没有值得保存的内容时，输出空数组 []。
+没有值得保存的内容时，输出 {"memories": []}。
 
 例子（严格遵守）：
 
 用户："以后回答时请先说明是否引用了我的文档"
-→ [{"tier": "preference", "content": "用户希望回答时先说明是否引用了上传文档", "importance": 0.9, "reason": "对未来所有回答方式的要求"}]
+→ {"memories": [{"tier": "preference", "content": "用户希望回答时先说明是否引用了上传文档", "importance": 0.9, "reason": "对未来所有回答方式的要求"}]}
 
 用户："请你在每次回答问题前加上'好的'"
-→ [{"tier": "preference", "content": "用户希望每次回答前先说'好的'", "importance": 0.8, "reason": "稳定的回答格式偏好"}]
+→ {"memories": [{"tier": "preference", "content": "用户希望每次回答前先说'好的'", "importance": 0.8, "reason": "稳定的回答格式偏好"}]}
 
 用户："我正在写 RAG 报告，实验部分还没有完成，请记住"
-→ [{"tier": "task_state", "content": "用户正在写 RAG 报告，实验部分尚未完成", "importance": 0.7, "reason": "当前项目进度"}]
+→ {"memories": [{"tier": "task_state", "content": "用户正在写 RAG 报告，实验部分尚未完成", "importance": 0.7, "reason": "当前项目进度"}]}
 
 用户："请解释一下 RAG"
-→ []
+→ {"memories": []}
 
 用户："记住我的邮箱是 test@example.com"
-→ []
+→ {"memories": []}
 
-只输出 json 数组，不要输出任何其他内容：
-[{"tier": "profile|preference|task_state", "content": "用户...", "importance": 0.0, "reason": ""}]"""
+只输出 json 对象，不要输出任何其他内容：
+{"memories": [{"tier": "profile|preference|task_state", "content": "用户...", "importance": 0.0, "reason": ""}]}"""
 
 
 # --------------------------------------------------------------------------- #
 # 工具函数
 # --------------------------------------------------------------------------- #
+
+class MemoryParseError(ValueError):
+    """结构化输出无法解析成合法候选。带简短类别，便于写进 stats 而不泄漏原文。"""
+
+    def __init__(self, kind: str) -> None:
+        self.kind = kind
+        super().__init__(kind)
+
+
+def _parse_memory_payload(text: str) -> list[Any]:
+    """把模型的结构化输出解析成候选列表（Issue #70）。
+
+    统一协议是 ``{"memories": [...]}``（与 json_mode=json_object 一致），
+    同时兼容实际模型可能的两种变体，但不把任意对象当记忆：
+      - 顶层数组 ``[...]``（旧版提示词的输出）
+      - 单项合法对象 ``{"tier": ..., "content": ...}``
+    空结果 ``{"memories": []}`` → []；其他对象 → MemoryParseError。
+    """
+    stripped = (text or "").strip()
+    # 剥掉 ```json ... ``` 围栏（可能带"好的："前缀）后再判断顶层类型。
+    # json_utils 内部也会剥，但这里需要先知道顶层是 [ 还是 { 才能正确分流。
+    fence = re.search(r"```(?:json)?\s*(.*?)```", stripped, re.DOTALL | re.I)
+    if fence:
+        stripped = fence.group(1).strip()
+    if not stripped:
+        raise MemoryParseError("empty_output")
+
+    # 按首字符分流：extract_json_object 会从数组文本里抠出第一个对象，
+    # 所以必须先判断顶层类型，否则顶层数组会被误当成单项对象丢掉后续项。
+    if stripped.startswith("["):
+        try:
+            return extract_json_array(stripped)
+        except Exception as exc:
+            raise MemoryParseError(f"not_json:{type(exc).__name__}") from exc
+
+    # 对象：首选 {"memories": [...]}；兼容单项合法对象；拒绝任意对象
+    try:
+        obj = extract_json_object(stripped)
+    except Exception as exc:
+        raise MemoryParseError(f"not_json:{type(exc).__name__}") from exc
+    if "memories" in obj:
+        items = obj["memories"]
+        if not isinstance(items, list):
+            raise MemoryParseError("memories_not_array")
+        return items
+    if "tier" in obj or "content" in obj:
+        return [obj]
+    raise MemoryParseError("object_without_memories")
+
+
 def looks_memorable(question: str) -> bool:
     """闸 1：这句话里有没有值得记忆的强信号。
 
@@ -274,6 +324,7 @@ class LLMMemoryManager:
             "dropped_duplicate": 0,
             "dropped_invalid": 0,
             "skipped": None,
+            "parse_detail": None,
         }
 
         # 闸 1：没有强信号就不花这次模型调用
@@ -304,9 +355,15 @@ class LLMMemoryManager:
         self.last_stats["llm_called"] = True
 
         try:
-            payload = extract_json_array(response.text)
-        except Exception:  # noqa: BLE001
+            payload = _parse_memory_payload(response.text)
+        except MemoryParseError as exc:
+            # Issue #70：保留 parse_error 兼容旧测试/UI，另记可诊断类别，不写原始文本
             self.last_stats["skipped"] = "parse_error"
+            self.last_stats["parse_detail"] = exc.kind
+            return []
+        except Exception as exc:  # noqa: BLE001 - 兜底，不泄漏模型输出
+            self.last_stats["skipped"] = "parse_error"
+            self.last_stats["parse_detail"] = type(exc).__name__
             return []
 
         if not payload:

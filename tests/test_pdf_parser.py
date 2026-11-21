@@ -236,7 +236,8 @@ def test_parse_pdf_skips_blank_pages(monkeypatch, tmp_path) -> None:
         lambda _: FakeReader(pages),
     )
 
-    chunks = pdf_parser.parse_pdf(str(pdf_path))
+    # Fake PDF bytes test text extraction only; real OCR is tested separately.
+    chunks = pdf_parser.parse_pdf(str(pdf_path), ocr_mode="off")
 
     assert len(chunks) == 1
     assert chunks[0].page_number == 3
@@ -261,7 +262,8 @@ def test_parse_pdf_returns_empty_list_when_all_pages_are_blank(
         lambda _: FakeReader(pages),
     )
 
-    chunks = pdf_parser.parse_pdf(str(pdf_path))
+    # Fake PDF bytes test text extraction only; real OCR is tested separately.
+    chunks = pdf_parser.parse_pdf(str(pdf_path), ocr_mode="off")
 
     assert chunks == []
 
