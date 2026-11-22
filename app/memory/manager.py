@@ -54,6 +54,11 @@ _MEMORY_SIGNALS = (
     "以后都", "之后都", "以后用", "以后回答", "以后请", "往后都", "从现在起",
     "每次回答", "回答时请", "回答之前", "回答前请", "请先说明", "请记住", "别忘了",
     "下次",
+    # Issue #82：否定式长期偏好（"不要每次都…"）。必须带频率/未来词，
+    # 避免"我不要这个答案"这类一次性否定误命中。
+    "不要每次", "不要总", "不要动不动", "不用每次", "不需要每次",
+    "以后别", "以后不要", "后面别", "后面不要", "往后别", "从现在起不要",
+    "别每次", "别再", "不要再", "别总",
     # 背景
     "我在读", "我在做", "我正在", "我研究", "我的项目", "我的方向", "我们组",
     # 任务进度
@@ -72,6 +77,10 @@ _ENGLISH_SIGNALS = (
     # Issue #31：英文的"每次回答/回答前说明"偏好
     "every time", "before answering", "in every answer", "always respond",
     "please remember", "from now on please", "i want you to always",
+    # Issue #82：否定式偏好（必须带频率/未来词，避免一次性否定误命中）
+    "don't always", "dont always", "do not always", "no longer",
+    "don't keep", "dont keep", "never again", "from now on don't",
+    "stop including", "stop adding", "stop mentioning",
 )
 
 # --------------------------------------------------------------------------- #

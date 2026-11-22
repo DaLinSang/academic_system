@@ -154,3 +154,38 @@ def test_model_returning_empty_is_distinguishable_from_gate_skip():
     mgr2 = LLMMemoryManager(ScriptedLLM([]))
     mgr2.extract_candidates("请解释一下 RAG", "好的")
     assert mgr2.last_stats["skipped"] == "no_signal"
+
+
+# --------------------------------------------------------------------------- #
+# Issue #82：否定式长期偏好
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "question",
+    [
+        "我希望你后面不要每次都带着RAG的相关知识讲解了",
+        "以后别再提这件事了，记住",
+        "我不需要每次都列页码",
+        "后面不要再加英文摘要",
+        "别再重复这些背景介绍了",
+        "Please don't always include RAG background",
+        "Stop including citations going forward",
+    ],
+)
+def test_negative_preference_is_memorable(question):
+    """否定式长期偏好（带频率/未来词）必须命中闸 1。"""
+    assert looks_memorable(question) is True
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "我不要这个答案，换一个",
+        "不要给我看这个了",
+        "这个不对，重写",
+        "别给我这个版本",
+        "什么是 RAG",
+    ],
+)
+def test_one_off_negation_is_not_memorable(question):
+    """一次性否定请求不能误命中——"不要"裸词不在信号表里。"""
+    assert looks_memorable(question) is False

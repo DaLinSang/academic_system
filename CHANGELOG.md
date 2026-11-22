@@ -98,6 +98,10 @@
 
 ### Changed
 
+- `app/memory/manager.py`：闸 1 信号补否定式长期偏好（“不要每次/以后别/don't always”等），一次性否定仍不误命中（Issue #82）
+- 测试 `tests/test_memory_preference_signals.py`：新增 12 项否定偏好命中/一次性否定不误伤回归（Issue #82）
+- `app/memory/manager.py`：闸 1 信号补否定式长期偏好（“不要每次/以后别/don't always”等），一次性否定仍不误命中（Issue #82）
+- 测试 `tests/test_memory_preference_signals.py`：新增 12 项否定偏好命中/一次性否定不误伤回归（Issue #82）
 - `app/agent/answer_generator.py`：联网已决策但零网页证据时不调 LLM 编造事实；网页证据 prompt 显示真实 URL 而非'第 0 页'（Issue #71）
 - `app/retrieval/web_search.py`：新增 `last_diagnostics`（后端/失败类别/HTTP 状态，不含查询词）（Issue #71）
 - `app/agent/orchestrator.py`：web/end trace 写入结构化诊断；避免与生成阶段失败说明重复（Issue #71）
