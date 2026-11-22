@@ -14,6 +14,7 @@ from app.agent.session_store import SessionStore
 from app.core.config import settings
 from app.core.types import AgentState, ConversationTurn
 from app.ui.presenters import (
+    answer_panel_summary,
     claim_presentations,
     document_status_presentation,
     inspect_pdf_text,
@@ -21,12 +22,114 @@ from app.ui.presenters import (
     pdf_page_count,
     pipeline_stage_presentations,
     safe_pdf_name,
+    session_navigation_items,
     source_status,
     upload_error_message,
     used_citations,
     verification_notice,
     web_search_summary,
 )
+
+_APP_CSS = """
+<style>
+:root {
+  --aa-bg: #f7f7f4;
+  --aa-panel: #ffffff;
+  --aa-sidebar: #f0f0ec;
+  --aa-border: #deded8;
+  --aa-text-soft: #65655f;
+  --aa-accent: #385f55;
+  --aa-accent-soft: #e6efeb;
+}
+[data-testid="stAppViewContainer"] { background: var(--aa-bg); color: #242421; }
+[data-testid="stHeader"] { background: transparent; }
+[data-testid="stSidebar"] {
+  background: var(--aa-sidebar);
+  border-right: 1px solid var(--aa-border);
+  color: #242421;
+}
+[data-testid="stAppViewContainer"] p,
+[data-testid="stAppViewContainer"] label,
+[data-testid="stAppViewContainer"] h1,
+[data-testid="stAppViewContainer"] h2,
+[data-testid="stAppViewContainer"] h3,
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 { color: #242421; }
+[data-testid="stSidebar"] .block-container { padding-top: 1.25rem; }
+.block-container {
+  max-width: 1680px;
+  padding-top: 1.25rem;
+  padding-bottom: 6.5rem;
+}
+h1, h2, h3 { letter-spacing: -0.02em; }
+[data-testid="stChatMessage"] {
+  background: rgba(255,255,255,.72);
+  border: 1px solid var(--aa-border);
+  border-radius: 16px;
+  padding: .25rem .4rem;
+  margin-bottom: .65rem;
+}
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] p {
+  line-height: 1.72;
+}
+[data-testid="stExpander"] {
+  background: rgba(255,255,255,.62);
+  border: 1px solid var(--aa-border);
+  border-radius: 12px;
+}
+[data-testid="stExpander"] details summary { background: transparent; color: #242421; }
+[data-testid="stFileUploader"] { border-radius: 12px; }
+.stTextInput input, .stTextArea textarea,
+[data-testid="stChatInput"] textarea,
+[data-baseweb="select"] > div {
+  background: #ffffff !important;
+  color: #242421 !important;
+  border-color: var(--aa-border) !important;
+}
+.stTextInput input::placeholder, .stTextArea textarea::placeholder,
+[data-testid="stChatInput"] textarea::placeholder { color: #77776f !important; }
+.aa-kicker { color: var(--aa-accent); font-weight: 650; font-size: .78rem; }
+.aa-muted { color: var(--aa-text-soft); font-size: .82rem; }
+.aa-session-meta { color: var(--aa-text-soft); font-size: .72rem; margin-top: -.45rem; }
+.right-rail-marker { display: none; }
+button[kind="primary"] {
+  background: var(--aa-accent);
+  border-color: var(--aa-accent);
+  color: #ffffff;
+}
+button[kind="secondary"] {
+  background: rgba(255,255,255,.78);
+  border-color: var(--aa-border);
+  color: #242421;
+}
+button:focus-visible, input:focus-visible, textarea:focus-visible {
+  outline: 3px solid rgba(56,95,85,.25) !important;
+  outline-offset: 2px;
+}
+@media (min-width: 1100px) {
+  div[data-testid="stHorizontalBlock"]:has(.right-rail-marker)
+  > div[data-testid="stColumn"]:last-child {
+    position: sticky;
+    top: 1rem;
+    align-self: flex-start;
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+    padding-right: .2rem;
+  }
+}
+@media (max-width: 1099px) {
+  .block-container { padding-left: 1rem; padding-right: 1rem; }
+  div[data-testid="stHorizontalBlock"]:has(.right-rail-marker) {
+    flex-direction: column;
+  }
+  div[data-testid="stHorizontalBlock"]:has(.right-rail-marker)
+  > div[data-testid="stColumn"] { width: 100% !important; }
+}
+</style>
+"""
 
 
 def _sync_mode_flags() -> None:
@@ -76,8 +179,21 @@ def _render_state(
 ) -> None:
     st.markdown(state.final_answer)
     citations = used_citations(state)
+    summary = answer_panel_summary(state)
+    if summary["unsupported"]:
+        st.warning(
+            f"有 {summary['unsupported']} 条事实性 claim 缺少充分证据；"
+            "请展开 Claim Verification 核对。"
+        )
+    elif summary["unverified"]:
+        st.info(
+            f"有 {summary['unverified']} 条 claim 暂时无法可靠判断；"
+            "可展开校验详情查看原因。"
+        )
+    if state.errors:
+        st.warning(f"本轮有 {len(state.errors)} 条运行异常，详情见“运行信息”。")
     if citations:
-        with st.expander("来源引用", expanded=True):
+        with st.expander(f"来源引用 · {summary['citations']} 条", expanded=False):
             for citation in citations:
                 if citation["is_web"] and citation["url"]:
                     st.markdown(
@@ -91,9 +207,17 @@ def _render_state(
                     )
                 if citation["quote"]:
                     st.caption(citation["quote"])
-    with st.expander("Claim Verification", expanded=True):
+    with st.expander(
+        f"Claim Verification · {summary['claims']} 条"
+        + (f" · {summary['unsupported']} 条需注意" if summary["unsupported"] else ""),
+        expanded=False,
+    ):
         _render_claims(state)
-    with st.expander("运行信息"):
+    with st.expander(
+        f"运行信息 · {len(state.evidence)} 条证据"
+        + (f" · {summary['errors']} 条异常" if summary["errors"] else ""),
+        expanded=False,
+    ):
         if state.route:
             st.write("Router:", state.route.route.value, "-", state.route.reason)
         st.caption(f"用户：{state.user_id} · 会话：{state.session_id} · 轮次：{state.turn_index}")
@@ -239,7 +363,6 @@ def _render_upload(orch: Any, runtime: str) -> None:
 def _render_documents(
     persisted: dict[str, dict[str, Any]], index_error: str | None
 ) -> None:
-    st.subheader("文档状态")
     statuses = _document_statuses()
     paths = {
         path.name: path
@@ -257,9 +380,11 @@ def _render_documents(
                 attempt=statuses.get(name),
                 persisted=persisted.get(name),
             )
-            st.caption(f"• {name} · {row['label']}")
+            icon = "✓" if row["level"] == "success" else "!" if row["level"] == "error" else "•"
+            st.markdown(f"**{icon} {name}**")
+            st.caption(row["label"])
             if row["detail"]:
-                st.caption(f"  {row['detail']}")
+                st.caption(row["detail"])
     else:
         st.caption("尚未上传 PDF。")
 
@@ -271,9 +396,7 @@ def _render_memories(
     enabled: bool,
     latest_state: AgentState | None,
 ) -> None:
-    st.subheader("长期记忆")
-    st.caption(f"当前用户：{user_id} · 当前会话：{session_id}")
-    st.caption("用户 ID 仅用于数据隔离，不是登录或身份认证。")
+    st.caption(f"用户：{user_id} · 会话：{session_id}")
     if not enabled:
         st.info("当前已关闭长期记忆；本轮不会读取或保存。")
         return
@@ -291,10 +414,14 @@ def _render_memories(
         st.caption("当前用户暂无已保存的长期记忆。")
         return
 
-    st.success(f"当前用户已保存 {len(memories)} 条长期记忆。")
+    st.success(f"已保存 {len(memories)} 条长期记忆。")
 
     for memory in memories:
-        with st.expander(f"[{memory.tier.value}] {memory.content[:36]}"):
+        with st.popover(
+            f"{memory.content[:42]}" + ("…" if len(memory.content) > 42 else ""),
+            use_container_width=True,
+        ):
+            st.caption(f"层级：{memory.tier.value}")
             content = st.text_area(
                 "内容", memory.content, key=f"memory-content-{memory.memory_id}"
             )
@@ -345,10 +472,92 @@ def _new_session_id() -> str:
     return f"chat-{uuid4().hex[:8]}"
 
 
+def _select_session(session_id: str) -> None:
+    st.session_state.pending_session_id = session_id
+    st.session_state.loaded_session = None
+    st.rerun()
+
+
+def _render_session_sidebar(store: SessionStore) -> tuple[str, str]:
+    """Render a scan-friendly, user-isolated conversation list."""
+    with st.sidebar:
+        st.markdown('<div class="aa-kicker">ACADEMIC ASSISTANT</div>', unsafe_allow_html=True)
+        st.subheader("会话")
+        user_id = st.text_input("用户 ID", key="user_id").strip()
+        try:
+            sessions = store.list_sessions(user_id)
+        except ValueError as exc:
+            st.error(str(exc))
+            st.stop()
+
+        current = st.session_state.session_selector
+        session_ids = [item["session_id"] for item in sessions]
+        if current not in session_ids:
+            store.create(user_id, current)
+            sessions = store.list_sessions(user_id)
+            session_ids = [item["session_id"] for item in sessions]
+
+        if st.button("＋ 新建会话", type="primary", use_container_width=True):
+            target = _new_session_id()
+            store.create(user_id, target)
+            _select_session(target)
+
+        st.caption("最近会话")
+        for item in session_navigation_items(sessions, current):
+            selected = "● " if item["selected"] else ""
+            label = f"{selected}{item['session_id']} · {item['summary'][:30]}"
+            if st.button(
+                label,
+                key=f"session-open-{user_id}-{item['session_id']}",
+                type="primary" if item["selected"] else "secondary",
+                use_container_width=True,
+                help=(
+                    f"{item['turn_count']} 轮"
+                    + (f" · {item['timestamp']}" if item["timestamp"] else "")
+                ),
+            ) and not item["selected"]:
+                _select_session(item["session_id"])
+
+        session_id = current
+        with st.expander("管理当前会话", expanded=False):
+            st.caption(f"当前：{session_id}")
+            rename_id = st.text_input(
+                "会话名称", value=session_id, key=f"rename-{user_id}-{session_id}"
+            )
+            rename_col, delete_col = st.columns(2)
+            if rename_col.button(
+                "重命名", key=f"rename-button-{session_id}", use_container_width=True
+            ):
+                try:
+                    store.rename(user_id, session_id, rename_id.strip())
+                    _select_session(rename_id.strip())
+                except (ValueError, OSError) as exc:
+                    st.error(f"重命名失败：{exc}")
+            if delete_col.button(
+                "删除", key=f"delete-button-{session_id}", use_container_width=True
+            ):
+                store.clear(user_id, session_id)
+                remaining = [item for item in session_ids if item != session_id]
+                target = remaining[0] if remaining else _new_session_id()
+                store.create(user_id, target)
+                _select_session(target)
+            if st.button(
+                "清空对话内容",
+                key=f"clear-button-{session_id}",
+                use_container_width=True,
+            ):
+                store.clear(user_id, session_id)
+                store.create(user_id, session_id)
+                st.session_state.history = []
+                st.session_state.loaded_session = (user_id, session_id)
+                st.rerun()
+        st.caption("共享文档库 · 会话按用户隔离")
+    return user_id, session_id
+
+
 def main() -> None:
     st.set_page_config(page_title="Academic Agent", page_icon="A", layout="wide")
-    st.title("Agentic Academic Assistant")
-    st.caption("文档问答 · 页码引用 · 长期记忆 · Claim Verification")
+    st.markdown(_APP_CSS, unsafe_allow_html=True)
     if "evaluation_mode" not in st.session_state:
         st.session_state.evaluation_mode = "B4"
         _sync_mode_flags()
@@ -359,76 +568,25 @@ def main() -> None:
     pending = st.session_state.pop("pending_session_id", None)
     if pending:
         st.session_state.session_selector = pending
-
-    with st.sidebar:
-        st.header("身份与会话")
-        user_id = st.text_input("用户 ID", key="user_id").strip()
-        try:
-            sessions = store.list_sessions(user_id)
-        except ValueError as exc:
-            st.error(str(exc))
-            st.stop()
-        session_ids = [item["session_id"] for item in sessions]
-        current = st.session_state.session_selector
-        if current not in session_ids:
-            store.create(user_id, current)
-            session_ids.insert(0, current)
-        session_id = st.selectbox("当前会话", session_ids, key="session_selector")
-
-        new_id = st.text_input("新会话 ID", placeholder="留空则自动生成")
-        if st.button("创建会话", use_container_width=True):
-            target = new_id.strip() or _new_session_id()
-            try:
-                store.create(user_id, target)
-                st.session_state.pending_session_id = target
-                st.session_state.loaded_session = None
-                st.rerun()
-            except (ValueError, OSError) as exc:
-                st.error(f"创建失败：{exc}")
-
-        rename_id = st.text_input("重命名当前会话", value=session_id)
-        rename_col, delete_col = st.columns(2)
-        if rename_col.button("重命名", use_container_width=True):
-            try:
-                store.rename(user_id, session_id, rename_id.strip())
-                st.session_state.pending_session_id = rename_id.strip()
-                st.session_state.loaded_session = None
-                st.rerun()
-            except (ValueError, OSError) as exc:
-                st.error(f"重命名失败：{exc}")
-        if delete_col.button("删除", use_container_width=True):
-            store.clear(user_id, session_id)
-            remaining = [item for item in session_ids if item != session_id]
-            target = remaining[0] if remaining else _new_session_id()
-            store.create(user_id, target)
-            st.session_state.pending_session_id = target
-            st.session_state.loaded_session = None
-            st.rerun()
-
-        st.caption(f"工作区：共享文档库 · 会话：{session_id}")
-        st.divider()
-        st.header("运行设置")
-        runtime = st.radio("运行链路", ["Mock", "Real"], horizontal=True)
-        mode = st.selectbox(
-            "评测模式",
-            sorted(MODE_PRESETS),
-            key="evaluation_mode",
-            on_change=_sync_mode_flags,
-        )
-        top_k = st.slider("检索 Top-K", 1, 10, 5)
-        st.caption("精确问答通常保持默认即可；综述或多文档比较会自动扩展到至少 6 条证据。")
-        enable_memory = st.checkbox("启用长期记忆", key="enable_memory")
-        enable_verification = st.checkbox(
-            "启用 Claim Verification",
-            key="enable_verification",
-        )
-        st.caption("Real 模式使用 .env 中配置的模型；Mock 模式无需 API 或数据库。")
-        if st.button("清空当前会话", use_container_width=True):
-            store.clear(user_id, session_id)
-            store.create(user_id, session_id)
-            st.session_state.history = []
-            st.session_state.loaded_session = (user_id, session_id)
-            st.rerun()
+    user_id, session_id = _render_session_sidebar(store)
+    chat_col, info_col = st.columns([3.15, 1.15], gap="large")
+    with info_col:
+        st.markdown('<span class="right-rail-marker"></span>', unsafe_allow_html=True)
+        with st.expander("运行设置", expanded=True):
+            runtime = st.radio("运行链路", ["Mock", "Real"], horizontal=True)
+            mode = st.selectbox(
+                "评测模式",
+                sorted(MODE_PRESETS),
+                key="evaluation_mode",
+                on_change=_sync_mode_flags,
+            )
+            top_k = st.slider("检索 Top-K", 1, 10, 5)
+            enable_memory = st.checkbox("长期记忆", key="enable_memory")
+            enable_verification = st.checkbox(
+                "Claim Verification", key="enable_verification"
+            )
+            st.caption("综述和多文档比较会自动扩展到至少 6 条证据。")
+            st.caption("Real 使用 .env 模型；Mock 无需 API 或数据库。")
 
     orch = _get_orchestrator(runtime, top_k)
     if st.session_state.get("loaded_session") != (user_id, session_id):
@@ -440,9 +598,9 @@ def main() -> None:
         persisted_indexes, runtime
     )
 
-    chat_col, info_col = st.columns([2, 1])
     with chat_col:
-        st.subheader("对话")
+        st.title("Agentic Academic Assistant")
+        st.caption("文档问答 · 页码引用 · 长期记忆 · Claim Verification")
         for item in st.session_state.history:
             with st.chat_message("user"):
                 st.markdown(item["question"])
@@ -453,8 +611,12 @@ def main() -> None:
                     indexed_documents=indexed_documents,
                 )
 
-        with st.expander("上传或重新索引 PDF", expanded=False):
-            _render_upload(orch, runtime)
+        upload_col, input_hint_col = st.columns([1, 5])
+        with upload_col:
+            with st.popover("＋ 上传 PDF", use_container_width=True):
+                _render_upload(orch, runtime)
+        with input_hint_col:
+            st.caption("上传后可直接提问；失败时旧索引状态会继续保留。")
         question = st.chat_input("请输入文档问题、论文比较或研究任务")
         if question:
             flags = dict(MODE_PRESETS[mode])
@@ -497,13 +659,17 @@ def main() -> None:
                 st.error(f"运行失败：{type(exc).__name__}: {exc}")
 
     with info_col:
-        _render_documents(persisted_indexes, index_status_error)
+        with st.expander(
+            f"文档状态 · {uploaded_documents} 个文件", expanded=True
+        ):
+            _render_documents(persisted_indexes, index_status_error)
         latest_state = (
             st.session_state.history[-1]["state"]
             if st.session_state.history
             else None
         )
-        _render_memories(orch, user_id, session_id, enable_memory, latest_state)
+        with st.expander("长期记忆", expanded=False):
+            _render_memories(orch, user_id, session_id, enable_memory, latest_state)
 
 
 if __name__ == "__main__":

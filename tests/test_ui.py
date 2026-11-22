@@ -13,6 +13,7 @@ from app.core.types import (
     RouteType,
 )
 from app.ui import (
+    answer_panel_summary,
     claim_presentations,
     document_status_presentation,
     inspect_pdf_text,
@@ -20,6 +21,7 @@ from app.ui import (
     pdf_page_count,
     pipeline_stage_presentations,
     safe_pdf_name,
+    session_navigation_items,
     source_status,
     upload_error_message,
     used_citations,
@@ -359,6 +361,59 @@ def test_web_search_summary_covers_not_triggered_success_and_failure() -> None:
     failed = AgentState(question="q")
     failed.log("web_search", "error", error="offline")
     assert web_search_summary(failed) == ("error", "网页搜索失败：offline")
+
+    running = AgentState(question="q")
+    running.log("web_search", "decision", should_search=True)
+    assert web_search_summary(running) == (
+        "info", "网页搜索进行中，尚未返回结果。"
+    )
+
+
+def test_session_navigation_items_preserve_order_summary_and_selection() -> None:
+    rows = session_navigation_items(
+        [
+            {
+                "session_id": "recent",
+                "turn_count": 2,
+                "last_at": "2026-11-22T08:30:00+00:00",
+                "last_question": "Summarise the RAG paper",
+            },
+            {
+                "session_id": "empty",
+                "turn_count": 0,
+                "last_at": "2026-11-21T10:00:00+00:00",
+                "last_question": "",
+            },
+        ],
+        "recent",
+    )
+
+    assert [row["session_id"] for row in rows] == ["recent", "empty"]
+    assert rows[0]["selected"] is True
+    assert rows[0]["summary"] == "Summarise the RAG paper"
+    assert rows[0]["timestamp"] == "2026-11-22 08:30"
+    assert rows[1]["summary"] == "新会话"
+
+
+def test_answer_panel_summary_counts_visible_attention_states() -> None:
+    state = AgentState(question="q", errors=["retrieval: offline"])
+    state.claims = [
+        ClaimCheck(claim="supported", status=ClaimStatus.SUPPORTED),
+        ClaimCheck(claim="bad", status=ClaimStatus.UNSUPPORTED),
+        ClaimCheck(
+            claim="unknown",
+            status=ClaimStatus.UNSUPPORTED,
+            note="UNVERIFIED: ambiguous",
+        ),
+    ]
+
+    assert answer_panel_summary(state) == {
+        "citations": 0,
+        "claims": 3,
+        "unsupported": 1,
+        "unverified": 1,
+        "errors": 1,
+    }
 
 
 def test_source_status_distinguishes_web_document_direct_and_failure() -> None:

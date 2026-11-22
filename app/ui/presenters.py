@@ -201,10 +201,52 @@ def web_search_summary(state: AgentState) -> tuple[str, str]:
     if decisions:
         detail = decisions[-1].detail
         if bool(detail.get("should_search")):
-            return ("warning", "已决定联网，但未记录搜索执行结果。")
+            return ("info", "网页搜索进行中，尚未返回结果。")
         reason = str(detail.get("reason") or "本轮无需联网")
         return ("info", f"未触发网页搜索：{reason}")
     return ("info", "未触发网页搜索。")
+
+
+def session_navigation_items(
+    sessions: list[dict[str, Any]], current_session_id: str
+) -> list[dict[str, Any]]:
+    """Build compact, scan-friendly session rows for the left rail."""
+    rows: list[dict[str, Any]] = []
+    for item in sessions:
+        session_id = str(item.get("session_id") or "")
+        question = str(item.get("last_question") or "").strip()
+        last_at = str(item.get("last_at") or "")
+        timestamp = last_at[:16].replace("T", " ") if last_at else ""
+        rows.append(
+            {
+                "session_id": session_id,
+                "summary": question or "新会话",
+                "timestamp": timestamp,
+                "turn_count": int(item.get("turn_count", 0) or 0),
+                "selected": session_id == current_session_id,
+            }
+        )
+    return rows
+
+
+def answer_panel_summary(state: AgentState) -> dict[str, int]:
+    """Return counts used in collapsed answer-detail panel titles."""
+    citations = used_citations(state)
+    unsupported = sum(
+        check.status == ClaimStatus.UNSUPPORTED
+        and not (check.note or "").startswith("UNVERIFIED:")
+        for check in state.claims
+    )
+    unverified = sum(
+        (check.note or "").startswith("UNVERIFIED:") for check in state.claims
+    )
+    return {
+        "citations": len(citations),
+        "claims": len(state.claims),
+        "unsupported": unsupported,
+        "unverified": unverified,
+        "errors": len(state.errors),
+    }
 
 
 def source_status(
