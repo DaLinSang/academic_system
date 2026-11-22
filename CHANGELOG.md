@@ -98,6 +98,9 @@
 
 ### Changed
 
+- `app/agent/answer_generator.py`：web 已执行 count>0 时纠正“我无法联网”类错误表述，改为“已返回 N 条但无关”（Issue #83）
+- `app/agent/orchestrator.py`：#83 纠正触发后不再追加重复的 web note（Issue #83）
+- 测试 `tests/test_web_honesty_83.py`（5 项）：联网诚实性纠正与不误改边界（Issue #83）
 - `app/memory/manager.py`：闸 1 信号补否定式长期偏好（“不要每次/以后别/don't always”等），一次性否定仍不误命中（Issue #82）
 - 测试 `tests/test_memory_preference_signals.py`：新增 12 项否定偏好命中/一次性否定不误伤回归（Issue #82）
 - `app/memory/manager.py`：闸 1 信号补否定式长期偏好（“不要每次/以后别/don't always”等），一次性否定仍不误命中（Issue #82）
