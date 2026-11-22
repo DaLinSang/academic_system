@@ -42,6 +42,44 @@ _MAX_PAGE_CHARS = 4000
 _MAX_PAGE_BYTES = 2_000_000
 _ALLOWED_CONTENT_TYPES = ("text/html", "application/xhtml+xml", "text/plain")
 _LOCAL_HOSTS = {"localhost", "localhost.localdomain", "ip6-localhost"}
+_QUERY_FILLER = {"site", "www", "com", "the", "what", "when", "where", "who", "how",
+                 "for", "and", "with", "from", "latest", "current", "today", "official",
+                 "please", "search", "find", "give", "source", "link", "about"}
+
+
+def _query_topics(query: str) -> set[str]:
+    """Extract broad topic anchors from search text, avoiding question boilerplate."""
+    topics = {word for word in re.findall(r"[a-z0-9]{2,}", query.casefold())
+              if word not in _QUERY_FILLER and not word.isdigit()}
+    if "香港大学" in query:
+        topics.add("university of hong kong")
+    if "香港" in query:
+        topics.add("hong kong")
+    if "天气" in query or "氣象" in query:
+        topics.add("weather")
+    if "排名" in query:
+        topics.add("ranking")
+    return topics
+
+
+def _relevant_result(query: str, item: WebResult) -> bool:
+    topics = _query_topics(query)
+    if not topics:
+        return True
+    text = f"{item.title} {item.snippet} {urlparse(item.url).hostname or ''}".casefold()
+    if "university of hong kong" in topics and not any(
+        name in text for name in ("university of hong kong", "hku", "香港大学")
+    ):
+        return False
+    if "qs" in topics and "qs" not in text:
+        return False
+    if "weather" in topics and "weather" not in text and "天气" not in text:
+        return False
+    if "weather" in topics and "hong kong" in topics and not any(
+        name in text for name in ("hong kong", "香港")
+    ):
+        return False
+    return any(topic in text for topic in topics)
 
 # C review #55：chunk_id 用 web-{index} 会在多次 search 后碰撞，
 # state.add_evidence() 按 chunk_id 去重会静默丢掉后续查询结果。
@@ -275,7 +313,8 @@ class WebSearchTool:
                 response.raise_for_status()
                 parser = _SearchResultParser(backend=backend)
                 parser.feed(response.text)
-                results = parser.results[:top_k]
+                candidates = parser.results
+                results = [item for item in candidates if _relevant_result(query, item)][:top_k]
             except Exception as exc:  # noqa: BLE001 - 网络异常类型太多
                 kind = type(exc).__name__
                 failures.append(f"{backend}: {kind}")
@@ -288,14 +327,16 @@ class WebSearchTool:
                 continue
             if results:
                 self.last_diagnostics.append({
-                    "backend": backend, "kind": "ok", "count": len(results)
+                    "backend": backend, "kind": "ok", "count": len(results),
+                    "candidates": len(candidates), "relevant_results": len(results),
                 })
                 break
-            failures.append(f"{backend}: 未返回结果")
+            failures.append(f"{backend}: {'结果与问题无关' if candidates else '未返回结果'}")
             self.last_diagnostics.append({
                 "backend": backend,
-                "kind": "zero_results",
+                "kind": "irrelevant_results" if candidates else "zero_results",
                 "http_status": response.status_code if response is not None else None,
+                "candidates": len(candidates), "relevant_results": 0,
             })
 
         if not results:
