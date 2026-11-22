@@ -37,6 +37,7 @@ import re
 from app.agent.history_context import format_history
 from app.core.interfaces import LLM
 from app.core.types import AgentState
+from app.retrieval.study_intent import is_study_request
 
 __all__ = ["LLMAnswerGenerator", "NO_EVIDENCE_MESSAGE", "extract_citation_indices"]
 
@@ -47,6 +48,7 @@ NO_EVIDENCE_MESSAGE = (
 )
 
 _CITATION_PATTERN = re.compile(r"\[(\d+)\]")
+_PAGE_WITH_CITATION = re.compile(r"第\s*([\d、,，]+)\s*页[ \t]*((?:\[\d+\][ \t]*)+)")
 
 _SYSTEM_PROMPT = """你是学术知识助手。根据给定的证据回答用户问题。
 
@@ -199,8 +201,38 @@ class LLMAnswerGenerator:
             return self._fallback_from_evidence(state)
 
         answer = self._fix_web_honesty(answer, state)
+        answer = self._align_cited_pages(state, answer)
         self._audit_citations(state, answer)
         return answer
+
+    @staticmethod
+    def _align_cited_pages(state: AgentState, answer: str) -> str:
+        """Keep explicit page numbers consistent with the adjacent citation.
+
+        Citation [n] is an evidence index, not PDF page n. Only a page number
+        immediately followed by that citation is unambiguous enough to fix.
+        """
+        corrections: list[dict[str, object]] = []
+
+        def replace(match: re.Match[str]) -> str:
+            citations = [int(value) for value in _CITATION_PATTERN.findall(match.group(2))]
+            if not citations or any(not 1 <= n <= len(state.evidence) for n in citations):
+                return match.group()
+            items = [state.evidence[n - 1] for n in citations]
+            if any(item.is_web for item in items):
+                return match.group()
+            actual_pages = list(dict.fromkeys(item.page_number for item in items))
+            stated_pages = [int(value) for value in re.findall(r"\d+", match.group(1))]
+            if actual_pages == stated_pages:
+                return match.group()
+            corrections.append({"citations": citations, "from_pages": stated_pages,
+                                "to_pages": actual_pages})
+            return f"第 {'、'.join(map(str, actual_pages))} 页 {match.group(2).strip()}"
+
+        aligned = _PAGE_WITH_CITATION.sub(replace, answer)
+        if corrections:
+            state.log("generate", "page_citation_correction", corrections=corrections)
+        return aligned
 
     # ------------------------------------------------------------------ #
     # Web 表述诚实性（Issue #83）
@@ -287,10 +319,23 @@ class LLMAnswerGenerator:
     def _grounded_prompt(self, state: AgentState) -> str:
         history = self._format_history(state)
         history_block = f"{history}\n\n" if history else ""
+        study_instruction = ""
+        if is_study_request(state.question):
+            study_instruction = (
+                "学习任务：用多个页面的证据归纳不同主题，写成有条理的中文回答；"
+                "比较多份文档时分别说明各文档的观点，再列共同点和差异；"
+                "如果两份材料并未讨论同一个概念，要明确说明，"
+                "只有双方证据都支持时才能写成共同点；"
+                "复习请求可按核心概念、方法、结果及自测问题组织。"
+                "每条具体结论标对应引用；缺少证据的部分明确说明，"
+                "不要声称已经通读未给出的页面。"
+                "引用 [n] 是证据编号，不是 PDF 页码；如写出页码，"
+                "必须与该证据的真实页码一致。\n\n"
+            )
         return (
             f"证据：\n\n{self._format_evidence(state)}\n"
             f"{self._format_preferences(state)}\n\n"
-            f"{history_block}"
+            f"{history_block}{study_instruction}"
             f"用户问题：{state.question}"
         )
 
