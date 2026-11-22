@@ -15,6 +15,8 @@
 
 ### Added
 
+- `app/agent/web_query_rewriter.py`：LLM 搜索查询改写器，把口语问句精简为核心实体词（Issue #89）
+- 测试 `tests/test_web_query_rewriter.py`（8 项）：改写、清洗、降级、Orchestrator 接线与向后兼容（Issue #89）
 - 测试 `tests/test_web_zero_result_71.py`（6 项）：零结果阻断、不误伤普通问答、结构化诊断不泄漏查询词（Issue #71）
 - 测试 `tests/test_memory_json_contract_70.py`（13 项）：对象/数组兼容、可诊断解析失败、敏感过滤、已记录纠错（Issue #70）
 - 测试 `tests/test_planned_source_64.py`（5 项）：Planner 子查询继承 PDF 来源、指代只用用户问题、trace 记录来源约束（Issue #64）
@@ -98,6 +100,7 @@
 
 ### Changed
 
+- `app/agent/orchestrator.py` / `app/agent/factory.py`：联网前用 LLM 改写搜索 query，trace 记 query_rewrite（Issue #89）
 - `app/verification/verifier.py`：排除指令确认、行为承诺、搜索运行状态和纯页码来源说明，避免非事实元话语被误标 unsupported（Issue #80）
 - `app/ui/streamlit_app.py`：检索 Top-K 默认值由 3 调整为 5，并说明综述/多文档比较会自动扩展到至少 6 条证据（Issue #81）
 - `app/agent/answer_generator.py`：web 已执行 count>0 时纠正“我无法联网”类错误表述，改为“已返回 N 条但无关”（Issue #83）
