@@ -16,6 +16,7 @@ from app.core.types import DocumentChunk, Evidence, RetrievalMethod
 from app.ingestion.pdf_parser import parse_pdf
 from app.retrieval.bm25_retriever import BM25Retriever, _tokenize
 from app.retrieval.document_scope import expand_field_query, resolve_scope
+from app.retrieval.study_intent import is_study_request
 
 
 class Embedder(Protocol):
@@ -325,6 +326,127 @@ class HybridRetriever:
                     return selected
         return selected
 
+    def _retrieve_study_documents(
+        self, query: str, names: list[str], top_k: int
+    ) -> list[Evidence]:
+        """Select different parts of each requested PDF within a bounded budget.
+
+        The page range excludes a trailing bibliography when identifiable. It
+        does not read an entire PDF into the LLM prompt or claim exhaustive
+        coverage: each item remains an ordinary, verifiable Evidence chunk.
+        """
+        if len(names) > top_k:
+            self.last_clarification = (
+                f"本轮最多能引用 {top_k} 份文档，请减少要比较的文件数量。"
+            )
+            self.last_warning = self.last_clarification
+            return []
+
+        chunks_by_name: dict[str, list[DocumentChunk]] = {}
+        for name in names:
+            document_chunks = [c for c in self._bm25._chunks if c.file_name == name]
+            document_chunks.sort(key=lambda c: (c.page_number, c.char_start or 0, c.chunk_id))
+            bibliography_page = next(
+                (c.page_number for c in document_chunks if re.search(
+                    r"(?:^|\n)\s*(?:references|bibliography|参考文献)\s*(?:\n|$)",
+                    c.text, re.I,
+                )),
+                None,
+            )
+            if bibliography_page:
+                body = [c for c in document_chunks if c.page_number < bibliography_page]
+                document_chunks = body or document_chunks
+            chunks_by_name[name] = document_chunks
+
+        vector_scores: dict[str, float] = {}
+        try:
+            vector = self.embedder.embed(query)
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """SELECT chunk_id, 1 - (embedding <=> %s::vector) AS score
+                       FROM document_chunks WHERE file_name = ANY(%s)
+                       ORDER BY embedding <=> %s::vector LIMIT %s""",
+                    (vector, names, vector, max(top_k * 8, 32)),
+                ).fetchall()
+            vector_scores = {key: float(score) for key, score in rows}
+        except Exception as exc:
+            self.last_warning = f"Scoped vector retrieval unavailable; using text only: {exc}"
+
+        query_terms = set(_tokenize(expand_field_query(query)))
+        facets = (
+            "abstract introduction motivation objective background",
+            "method model approach architecture mechanism",
+            "experiment dataset evaluation results findings",
+            "results findings evidence analysis",
+            "discussion limitations conclusion contributions",
+            "conclusion takeaways applications implications future work",
+        )
+        chosen: dict[str, list[Evidence]] = {}
+        for name in names:
+            document_chunks = chunks_by_name[name]
+            pages = sorted({c.page_number for c in document_chunks})
+            target = (top_k // len(names)) + (names.index(name) < top_k % len(names))
+            selected: list[DocumentChunk] = []
+            used_pages: set[int] = set()
+            slots = min(target, len(pages))
+            for slot in range(slots):
+                low = slot * len(pages) // slots
+                high = (slot + 1) * len(pages) // slots
+                page_set = set(pages[low:high])
+                pool = [c for c in document_chunks if c.page_number in page_set]
+                if len(pages) <= 20 and slot == 0:
+                    abstract = [c for c in pool if re.search(
+                        r"\babstract\b|\b摘要\b", c.text, re.I
+                    )]
+                    if abstract:
+                        pool = abstract
+                if len(pages) <= 20 and slot == slots - 1 and slots >= 3:
+                    last_page = [c for c in pool if c.page_number == pages[-1]]
+                    if last_page:
+                        pool = last_page
+                informative = [c for c in pool if len(c.text.strip()) >= 120]
+                if informative:
+                    pool = informative
+                facet_terms = set(_tokenize(facets[min(slot * len(facets) // slots,
+                                                       len(facets) - 1)]))
+
+                def relevance(chunk: DocumentChunk,
+                              terms: set[str] = facet_terms) -> tuple[float, int, int]:
+                    tokens = set(_tokenize(chunk.text))
+                    score = (
+                        2 * len(query_terms & tokens)
+                        + len(terms & tokens)
+                        + max(0.0, vector_scores.get(chunk.chunk_id, 0.0))
+                        + min(len(chunk.text), 800) / 800
+                    )
+                    return score, len(chunk.text), -chunk.page_number
+
+                if pool:
+                    best = max(pool, key=relevance)
+                    selected.append(best)
+                    used_pages.add(best.page_number)
+
+            if len(selected) < target:
+                for chunk in sorted(document_chunks,
+                                    key=lambda c: (-len(c.text), c.page_number)):
+                    if chunk.page_number not in used_pages:
+                        selected.append(chunk)
+                        used_pages.add(chunk.page_number)
+                    if len(selected) >= target:
+                        break
+            chosen[name] = [Evidence.from_chunk(
+                chunk, score=round(vector_scores.get(chunk.chunk_id, 0.0), 4),
+                method=RetrievalMethod.VECTOR if chunk.chunk_id in vector_scores
+                else RetrievalMethod.BM25,
+            ) for chunk in selected]
+
+        # Interleave documents so the answer model's first six evidence blocks
+        # include each compared document, even when top_k is small.
+        result: list[Evidence] = []
+        for rank in range(max((len(items) for items in chosen.values()), default=0)):
+            result.extend(items[rank] for items in chosen.values() if rank < len(items))
+        return result[:top_k]
+
     def retrieve(self, query: str, top_k: int = 5) -> list[Evidence]:
         """Return BM25 and vector results fused with reciprocal rank fusion."""
         self.last_warning = None
@@ -339,7 +461,24 @@ class HybridRetriever:
             self.last_warning = scope.clarification
             return []
         if scope.names:
+            if is_study_request(query) or len(scope.names) > 1:
+                return self._retrieve_study_documents(query, list(scope.names), top_k)
             return self._retrieve_documents(query, list(scope.names), top_k)
+        if is_study_request(query) and re.search(
+            r"这(?:份|篇|个).{0,8}(?:PDF|文档|论文|讲义)|"
+            r"(?:this|the)\s+(?:pdf|paper|document)|"
+            r"(?:比较|对比|compare).*(?:文档|论文|PDF|paper|document)|"
+            r"复习|提纲",
+            query, re.I,
+        ):
+            names = sorted({c.file_name for c in self._bm25._chunks})
+            if len(names) == 1:
+                return self._retrieve_study_documents(query, names, top_k)
+            self.last_clarification = (
+                "文档库中有多份 PDF，请在问题中写出要总结或比较的文件名。"
+            )
+            self.last_warning = self.last_clarification
+            return []
         bm25_results = self._bm25.retrieve(query, top_k=max(top_k * 4, 20))
         try:
             vector_results = self._vector_results(
