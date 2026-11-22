@@ -57,6 +57,7 @@ ClaimCheck 包含 claim、status、confidence、supporting_evidence 和 note。R
 |---|---|---|
 | supporting_evidence 无法定位 | 使用了文件名而不是 chunk_id | 只返回输入 Evidence.chunk_id |
 | unsupported 比例异常高 | 把引导语、结语或纯引用当成 claim | 检查 split_claims 的元语句过滤 |
+| 指令确认被标 unsupported | 把“明白/收到/后续不再”等承诺当成事实 | `split_claims` 会排除确认、承诺和运行状态元话语 |
 | 中英文语义一致但词面无重叠 | 使用了 LexicalVerifier | Real 模式使用 SemanticVerifier；词法版本仅作 baseline/fallback |
 | 引用编号存在但内容不支持 | 把引用存在误当成支持 | SemanticVerifier 只检查该 claim 实际引用的 Evidence 内容 |
 | 无 Evidence 的 direct 回答显示错误 | 把未校验当 unsupported | Orchestrator 跳过校验，UI 显示“基于模型通用知识” |
@@ -74,4 +75,5 @@ SemanticVerifier 的判断质量取决于所配置模型，不能把 confidence 
 - Ruff 静态检查：通过
 - 跨语言支持、部分支持、错误引用、矛盾 Evidence、无 Evidence 路径测试：通过
 - Mock Orchestrator B4 注入测试：通过
+- 指令确认、行为承诺、搜索运行状态和纯页码来源说明：已从事实 claim 中排除（Issue #80）
 - 结论：Issue #30 的代码与测试修复完成，等待团队 review

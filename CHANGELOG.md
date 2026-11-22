@@ -98,6 +98,8 @@
 
 ### Changed
 
+- `app/verification/verifier.py`：排除指令确认、行为承诺、搜索运行状态和纯页码来源说明，避免非事实元话语被误标 unsupported（Issue #80）
+- `app/ui/streamlit_app.py`：检索 Top-K 默认值由 3 调整为 5，并说明综述/多文档比较会自动扩展到至少 6 条证据（Issue #81）
 - `app/agent/answer_generator.py`：web 已执行 count>0 时纠正“我无法联网”类错误表述，改为“已返回 N 条但无关”（Issue #83）
 - `app/agent/orchestrator.py`：#83 纠正触发后不再追加重复的 web note（Issue #83）
 - 测试 `tests/test_web_honesty_83.py`（5 项）：联网诚实性纠正与不误改边界（Issue #83）

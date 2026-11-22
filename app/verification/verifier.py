@@ -38,6 +38,20 @@ _INSUFFICIENT_CLAIM = re.compile(
     r"|^(?:i\s+)?cannot.{0,20}(?:answer|determine|verify)",
     re.IGNORECASE,
 )
+_NON_FACTUAL_CLAIM = re.compile(
+    r"^(?:关于[^：:\n]{0,40}[：:]\s*)?"
+    r"(?:明白|好的|好|收到|了解|没问题|可以|当然|遵命|"
+    r"我(?:会|将|不会|不再|可以|会按|将按)|"
+    r"后续(?:会|将|不会|不再)|接下来(?:会|将|不会|不再)|"
+    r"按(?:照)?(?:你的|您(?:的)?|用户的)?要求|"
+    r"understood|got it|okay|sure|i (?:will|won't|will not)|"
+    r"from now on i (?:will|won't|will not))"
+    r"|^(?:本轮|此次|当前轮次).{0,20}(?:网页搜索|联网搜索|检索)"
+    r".{0,30}(?:已执行|已完成|返回\s*\d+\s*条|没有可作为证据)"
+    r"|^(?:该|此|上述)?(?:信息|内容|回答|结论).{0,12}"
+    r"(?:来源于|来自|引自)\s*(?:文档|材料)?\s*第?\s*\d+\s*页",
+    re.IGNORECASE,
+)
 _ENGLISH_STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
     "in", "is", "it", "of", "on", "or", "that", "the", "this", "to",
@@ -61,6 +75,15 @@ def is_insufficient_answer(answer: str) -> bool:
     return any(is_insufficient_claim(part) for part in _SENTENCE_SPLIT.split(answer))
 
 
+def is_nonfactual_claim(text: str) -> bool:
+    """Return True for acknowledgements, promises, and system meta narration.
+
+    These sentences describe the assistant's intended behaviour or execution trace,
+    rather than a fact that should be supported by retrieved document evidence.
+    """
+    return bool(_NON_FACTUAL_CLAIM.search(_substantive_text(text)))
+
+
 def split_claims(answer: str, *, min_length: int = 8) -> list[str]:
     """Split an answer into factual sentence-like claims.
 
@@ -78,7 +101,7 @@ def split_claims(answer: str, *, min_length: int = 8) -> list[str]:
             continue
         if _META.match(substantive):
             continue
-        if is_insufficient_claim(substantive):
+        if is_insufficient_claim(substantive) or is_nonfactual_claim(substantive):
             continue
         claims.append(candidate)
     return claims

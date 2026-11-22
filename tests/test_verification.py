@@ -22,6 +22,7 @@ from app.verification import (
     LexicalVerifier,
     SemanticVerifier,
     is_insufficient_answer,
+    is_nonfactual_claim,
     split_claims,
 )
 
@@ -114,6 +115,29 @@ def test_split_claims_excludes_insufficient_evidence_statement_for_t07() -> None
 
     assert is_insufficient_answer(answer) is True
     assert split_claims(answer) == []
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "关于 RAG 附加内容：明白，后续回答不再附带 RAG 相关内容。",
+        "好的，我会按照你的要求回答。",
+        "收到，后续不再重复背景知识。",
+        "Understood, I will follow your requested format.",
+        "本轮网页搜索已执行并返回 3 条结果，但这些结果与本问题无关。",
+        "该信息来源于第 1 页。",
+    ],
+)
+def test_split_claims_excludes_nonfactual_acknowledgements_and_meta(answer: str) -> None:
+    assert is_nonfactual_claim(answer) is True
+    assert split_claims(answer) == []
+
+
+def test_nonfactual_filter_keeps_real_document_claims() -> None:
+    answer = "讲义中出现了 Agentic AI，并把规划列为智能体组件。"
+
+    assert is_nonfactual_claim(answer) is False
+    assert split_claims(answer) == ["讲义中出现了 Agentic AI，并把规划列为智能体组件"]
 
 
 @pytest.mark.parametrize("case", _CASES, ids=[case["case_id"] for case in _CASES])
