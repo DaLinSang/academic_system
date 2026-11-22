@@ -48,6 +48,7 @@ from app.core.types import (
     ToolResult,
     Usage,
 )
+from app.retrieval.study_intent import is_study_request, prioritize_study_evidence
 
 __all__ = ["Orchestrator", "MODE_PRESETS"]
 
@@ -188,6 +189,8 @@ class Orchestrator:
         # 没注入工具时整段跳过，行为与此前完全一致。
         if self.enable_web_search and self.web_search_tool is not None:
             self._maybe_web_search(state, route)
+            if is_study_request(state.question) and state.evidence:
+                state.evidence = prioritize_study_evidence(state.evidence)
 
         # 5) 生成草稿
         with self._stage(state, "generate") as ok:
@@ -416,9 +419,10 @@ class Orchestrator:
                     source_constraint=re.findall(r"[\w.-]+\.pdf\b", query, re.I),
                 )
                 try:
-                    overview = any(word in query.casefold() for word in
-                                   ("总结", "概括", "主要结论", "summar", "overview"))
-                    found = self.retriever.retrieve(query, top_k=max(self.top_k, 6) if overview else self.top_k)
+                    study = is_study_request(state.question)
+                    found = self.retriever.retrieve(
+                        query, top_k=max(self.top_k, 6) if study else self.top_k
+                    )
                 except Exception as exc:  # noqa: BLE001 - 跨模块边界统一兜底
                     latency = round((time.perf_counter() - started) * 1000, 2)
                     message = f"{type(exc).__name__}: {exc}"
@@ -476,6 +480,12 @@ class Orchestrator:
                 if step.tool == "llm" and step.status is StepStatus.PENDING:
                     step.status = StepStatus.SKIPPED
                     step.result_summary = "由 AnswerGenerator 统一完成，不作为独立工具执行"
+
+            if is_study_request(state.question) and state.evidence:
+                state.evidence = prioritize_study_evidence(state.evidence)
+                state.log("retrieval", "study_coverage", sources=list(dict.fromkeys(
+                    item.file_name for item in state.evidence[:6]
+                )), pages=[item.page_number for item in state.evidence[:6]])
 
             # 已处理（DONE / FAILED / SKIPPED）的步骤数。
             state.current_step = sum(
@@ -691,10 +701,8 @@ class Orchestrator:
         )
         if end is None:
             return ""
-        # Issue #71：生成阶段已在 web 失败时给出明确说明，不再重复追加
-        if not any(getattr(ev, "url", None) for ev in state.evidence) and any(
-            e.event == "web_search_failed" for e in state.trace
-        ):
+        # Issue #71/#83：生成阶段已在 web 失败/无关时给出明确说明，不再重复追加
+        if any(e.event in ("web_search_failed", "web_honesty_fix") for e in state.trace):
             return ""
         count = int(end.detail.get("count", 0) or 0)
         web_chunks = {e.chunk_id for e in state.evidence if e.url}
