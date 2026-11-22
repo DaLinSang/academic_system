@@ -198,8 +198,61 @@ class LLMAnswerGenerator:
             state.log("generate", "empty_response")
             return self._fallback_from_evidence(state)
 
+        answer = self._fix_web_honesty(answer, state)
         self._audit_citations(state, answer)
         return answer
+
+    # ------------------------------------------------------------------ #
+    # Web 表述诚实性（Issue #83）
+    # ------------------------------------------------------------------ #
+    _WEB_DENIAL_PATTERNS = (
+        "无法联网", "无法联网检索", "不能联网", "不能上网", "无法上网", "没法上网",
+        "无法执行联网", "无法执行联网检索", "没有联网能力", "不具备联网",
+        "无法访问互联网", "无法访问因特网", "不能访问互联网", "无法访问网络",
+    )
+
+    @classmethod
+    def _fix_web_honesty(cls, answer: str, state: AgentState) -> str:
+        """本轮确实执行了网页搜索时，纠正"我无法联网"类与事实矛盾的表述。
+
+        模型看到搜索结果全部无关，会错误推断成"我没有联网能力"。
+        这会让用户以为联网功能没做——必须改成准确表述。
+        只替换**整句**，不碰其他内容；trace 无 web 执行时原样返回。
+        """
+        end = next(
+            (e for e in state.trace if e.stage == "web_search" and e.event == "end"),
+            None,
+        )
+        if end is None:
+            return answer
+        count = int(end.detail.get("count", 0) or 0)
+        if count <= 0:  # 零结果走 #76 阻断，不在这里处理
+            return answer
+        if not any(p in answer for p in cls._WEB_DENIAL_PATTERNS):
+            return answer
+
+        correction = (
+            f"本轮网页搜索已执行并返回 {count} 条结果，"
+            "但这些结果与本问题无关，因此没有可作为证据的网页来源。"
+        )
+        fixed_lines: list[str] = []
+        changed = False
+        for line in answer.splitlines():
+            if any(p in line for p in cls._WEB_DENIAL_PATTERNS):
+                # 保留行首的项目符号，替换整句内容
+                prefix = ""
+                stripped = line.lstrip()
+                for mark in ("- ", "* ", "• "):
+                    if stripped.startswith(mark):
+                        prefix = line[: len(line) - len(stripped)] + mark
+                        break
+                fixed_lines.append(prefix + correction)
+                changed = True
+            else:
+                fixed_lines.append(line)
+        if changed:
+            state.log("generate", "web_honesty_fix", count=count)
+        return "\n".join(fixed_lines)
 
     # ------------------------------------------------------------------ #
     # 提示词构造

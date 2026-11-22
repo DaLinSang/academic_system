@@ -98,6 +98,9 @@
 
 ### Changed
 
+- `app/agent/answer_generator.py`：web 已执行 count>0 时纠正“我无法联网”类错误表述，改为“已返回 N 条但无关”（Issue #83）
+- `app/agent/orchestrator.py`：#83 纠正触发后不再追加重复的 web note（Issue #83）
+- 测试 `tests/test_web_honesty_83.py`（5 项）：联网诚实性纠正与不误改边界（Issue #83）
 - `app/agent/answer_generator.py`：联网已决策但零网页证据时不调 LLM 编造事实；网页证据 prompt 显示真实 URL 而非'第 0 页'（Issue #71）
 - `app/retrieval/web_search.py`：新增 `last_diagnostics`（后端/失败类别/HTTP 状态，不含查询词）（Issue #71）
 - `app/agent/orchestrator.py`：web/end trace 写入结构化诊断；避免与生成阶段失败说明重复（Issue #71）

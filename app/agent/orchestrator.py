@@ -691,10 +691,8 @@ class Orchestrator:
         )
         if end is None:
             return ""
-        # Issue #71：生成阶段已在 web 失败时给出明确说明，不再重复追加
-        if not any(getattr(ev, "url", None) for ev in state.evidence) and any(
-            e.event == "web_search_failed" for e in state.trace
-        ):
+        # Issue #71/#83：生成阶段已在 web 失败/无关时给出明确说明，不再重复追加
+        if any(e.event in ("web_search_failed", "web_honesty_fix") for e in state.trace):
             return ""
         count = int(end.detail.get("count", 0) or 0)
         web_chunks = {e.chunk_id for e in state.evidence if e.url}
