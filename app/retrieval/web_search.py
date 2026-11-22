@@ -45,6 +45,10 @@ _LOCAL_HOSTS = {"localhost", "localhost.localdomain", "ip6-localhost"}
 _QUERY_FILLER = {"site", "www", "com", "the", "what", "when", "where", "who", "how",
                  "for", "and", "with", "from", "latest", "current", "today", "official",
                  "please", "search", "find", "give", "source", "link", "about"}
+_ZH_QUERY_FILLER = (
+    "请你", "请帮我", "帮我", "上网", "联网", "搜一下", "搜索", "查询", "查一下",
+    "怎么样", "是什么", "告诉我", "介绍一下", "介绍", "关于", "请", "你", "一下",
+)
 
 
 def _query_topics(query: str) -> set[str]:
@@ -59,6 +63,13 @@ def _query_topics(query: str) -> set[str]:
         topics.add("weather")
     if "排名" in query:
         topics.add("ranking")
+    # 中文口语问句没有拉丁词时，不能放行所有搜索结果。去掉请求用语后
+    # 用连续三字片段匹配核心主题；允许“计算机科学专业”匹配“计算机科学与技术”。
+    subject = query
+    for filler in _ZH_QUERY_FILLER:
+        subject = subject.replace(filler, " ")
+    for phrase in re.findall(r"[\u4e00-\u9fff]{3,}", subject):
+        topics.update(phrase[i:i + 3] for i in range(len(phrase) - 2))
     return topics
 
 

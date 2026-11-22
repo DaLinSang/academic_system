@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from app.core.types import RetrievalMethod
-from app.retrieval.web_search import WebSearchTool
+from app.retrieval.web_search import WebResult, WebSearchTool, _query_topics, _relevant_result
 
 DDG_HTML = """
 <html><body>
@@ -56,6 +56,15 @@ def test_search_returns_web_evidence():
     assert all(e.is_web for e in results)
     assert all(e.retrieval_method is RetrievalMethod.WEB for e in results)
     assert all(e.page_number == 0 for e in results)
+
+
+def test_pure_chinese_query_filters_unrelated_results():
+    query = "你上网帮我搜一下计算机科学专业怎么样"
+    assert _query_topics(query)
+    assert not _relevant_result(query, WebResult("鸣潮如何查看地图探索度", "https://example.com/game"))
+    assert _relevant_result(
+        query, WebResult("计算机科学与技术（本科专业）", "https://example.com/degree")
+    )
 
 
 def test_unrelated_search_hits_are_not_web_evidence():
