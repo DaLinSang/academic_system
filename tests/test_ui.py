@@ -355,7 +355,7 @@ def test_web_search_summary_covers_not_triggered_success_and_failure() -> None:
     searched.log("web_search", "decision", should_search=True)
     searched.log("web_search", "end", count=2, warning=None)
     assert web_search_summary(searched) == (
-        "success", "已搜索并取得 2 条网页证据"
+        "success", "已找到 2 条相关网页来源"
     )
 
     failed = AgentState(question="q")
@@ -366,6 +366,40 @@ def test_web_search_summary_covers_not_triggered_success_and_failure() -> None:
     running.log("web_search", "decision", should_search=True)
     assert web_search_summary(running) == (
         "info", "网页搜索进行中，尚未返回结果。"
+    )
+
+
+def test_web_search_summary_distinguishes_irrelevant_candidates_and_backend_failure() -> None:
+    irrelevant = AgentState(question="q")
+    irrelevant.log(
+        "web_search",
+        "end",
+        count=0,
+        warning="结果与问题无关",
+        diagnostics=[
+            {
+                "backend": "bing",
+                "kind": "irrelevant_results",
+                "candidates": 4,
+                "relevant_results": 0,
+            }
+        ],
+    )
+    assert web_search_summary(irrelevant) == (
+        "warning",
+        "网页搜索已执行，收到 4 条候选，但没有找到与问题相关的可用来源。",
+    )
+
+    failed = AgentState(question="q")
+    failed.log(
+        "web_search",
+        "end",
+        count=0,
+        warning="Tavily 搜索失败: ConnectTimeout",
+        diagnostics=[{"backend": "tavily", "kind": "ConnectTimeout"}],
+    )
+    assert web_search_summary(failed) == (
+        "error", "网页搜索失败：Tavily 搜索失败: ConnectTimeout"
     )
 
 
@@ -561,4 +595,34 @@ def test_memory_summary_reports_confirmed_store_and_filtered_candidates() -> Non
     assert memory_write_summary(filtered) == (
         "info",
         "模型建议 1 条记忆，但未保存：重复 1 条。",
+    )
+
+
+def test_memory_summary_reports_contradiction_updates_and_update_failures() -> None:
+    updated = AgentState(question="Change my preference", enable_memory=True)
+    updated.log(
+        "memory_write",
+        "stats",
+        skipped=None,
+        proposed=1,
+        accepted=1,
+        contradictions_checked=1,
+        contradictions_updated=1,
+    )
+    updated.log("memory_write", "end", stored=0, updated=1)
+    assert memory_write_summary(updated) == (
+        "success", "本轮已更新 1 条冲突的长期记忆。"
+    )
+
+    mixed = AgentState(question="Remember two things", enable_memory=True)
+    mixed.log("memory_write", "stats", skipped=None, proposed=2, accepted=2)
+    mixed.log("memory_write", "end", stored=1, updated=1)
+    assert memory_write_summary(mixed) == (
+        "success", "本轮新增 1 条长期记忆，并更新 1 条冲突记忆。"
+    )
+
+    failed = AgentState(question="Change my preference", enable_memory=True)
+    failed.log("memory_write", "update_error", error="RuntimeError")
+    assert memory_write_summary(failed) == (
+        "error", "长期记忆更新失败：RuntimeError"
     )
