@@ -15,6 +15,8 @@
 
 ### Added
 
+- `app/retrieval/tavily_search.py`：Tavily API 搜索后端（与 WebSearchTool 同接口，返回已清洗正文）（Issue #89）
+- 测试 `tests/test_tavily_search.py`（6 项）：结果转换、SSRF、无 key/错误/空结果、诊断脱敏（Issue #89）
 - 测试 `tests/test_web_zero_result_71.py`（6 项）：零结果阻断、不误伤普通问答、结构化诊断不泄漏查询词（Issue #71）
 - 测试 `tests/test_memory_json_contract_70.py`（13 项）：对象/数组兼容、可诊断解析失败、敏感过滤、已记录纠错（Issue #70）
 - 测试 `tests/test_planned_source_64.py`（5 项）：Planner 子查询继承 PDF 来源、指代只用用户问题、trace 记录来源约束（Issue #64）
@@ -98,6 +100,8 @@
 
 ### Changed
 
+- `app/core/config.py`：新增 `SearchSettings`（TAVILY_API_KEY 等）；`app/agent/factory.py`：有 key 走 Tavily、无 key 回退 HTML（Issue #89）
+- `.env.example`：补充 Tavily 配置项（空值示例，无真实 key）（Issue #89）
 - `app/verification/verifier.py`：排除指令确认、行为承诺、搜索运行状态和纯页码来源说明，避免非事实元话语被误标 unsupported（Issue #80）
 - `app/ui/streamlit_app.py`：检索 Top-K 默认值由 3 调整为 5，并说明综述/多文档比较会自动扩展到至少 6 条证据（Issue #81）
 - `app/agent/answer_generator.py`：web 已执行 count>0 时纠正“我无法联网”类错误表述，改为“已返回 N 条但无关”（Issue #83）

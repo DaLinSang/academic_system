@@ -118,6 +118,7 @@ def build_stage1_orchestrator(
     不应该因为 psycopg / httpx 之类的依赖而变得不可用。
     """
     from app.agent.answer_generator import LLMAnswerGenerator
+    from app.core.config import settings
     from app.llm.client import get_llm
     from app.memory import LLMMemoryManager, PostgresMemoryStore, RuleBasedMemoryManager
     from app.planning.planner import LLMPlanner
@@ -127,6 +128,15 @@ def build_stage1_orchestrator(
     from app.verification import LexicalVerifier, SemanticVerifier
 
     llm = get_llm()
+
+    def build_web_tool():
+        """Issue #89：有 Tavily key 走稳定 API，无 key 回退 HTML 爬取。"""
+        if not enable_web_search:
+            return None
+        if settings.search.tavily_api_key:
+            from app.retrieval.tavily_search import TavilySearchTool
+            return TavilySearchTool()
+        return WebSearchTool()
 
     if memory_strategy == "rule":
         memory_manager = RuleBasedMemoryManager()
@@ -145,6 +155,6 @@ def build_stage1_orchestrator(
         answer_generator=LLMAnswerGenerator(llm),
         llm=llm,
         top_k=top_k,
-        web_search_tool=WebSearchTool() if enable_web_search else None,
+        web_search_tool=build_web_tool(),
         enable_web_search=enable_web_search,
     )

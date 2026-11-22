@@ -85,6 +85,21 @@ class DatabaseSettings:
 
 
 @dataclass(frozen=True)
+class SearchSettings:
+    """联网搜索后端配置（Issue #89）。
+
+    API key 为空时自动回退到 HTML 端点爬取（既有行为），向后兼容。
+    """
+
+    tavily_api_key: str = field(default_factory=lambda: _get("TAVILY_API_KEY"))
+    tavily_base_url: str = field(
+        default_factory=lambda: _get("TAVILY_BASE_URL", "https://api.tavily.com")
+    )
+    tavily_timeout: int = field(default_factory=lambda: _get_int("TAVILY_TIMEOUT", 40))
+    tavily_depth: str = field(default_factory=lambda: _get("TAVILY_DEPTH", "basic"))
+
+
+@dataclass(frozen=True)
 class RuntimeSettings:
     log_dir: Path = field(default_factory=lambda: PROJECT_ROOT / _get("LOG_DIR", "logs"))
     runs_dir: Path = field(default_factory=lambda: PROJECT_ROOT / _get("RUNS_DIR", "runs"))
@@ -100,6 +115,7 @@ class Settings:
     llm: LLMSettings = field(default_factory=LLMSettings)
     embedding: EmbeddingSettings = field(default_factory=EmbeddingSettings)
     db: DatabaseSettings = field(default_factory=DatabaseSettings)
+    search: SearchSettings = field(default_factory=SearchSettings)
     runtime: RuntimeSettings = field(default_factory=RuntimeSettings)
 
 
