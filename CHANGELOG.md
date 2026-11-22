@@ -98,6 +98,8 @@
 
 ### Changed
 
+- `app/verification/verifier.py`：排除指令确认、行为承诺、搜索运行状态和纯页码来源说明，避免非事实元话语被误标 unsupported（Issue #80）
+- `app/ui/streamlit_app.py`：检索 Top-K 默认值由 3 调整为 5，并说明综述/多文档比较会自动扩展到至少 6 条证据（Issue #81）
 - `app/memory/manager.py`：闸 1 信号补否定式长期偏好（“不要每次/以后别/don't always”等），一次性否定仍不误命中（Issue #82）
 - 测试 `tests/test_memory_preference_signals.py`：新增 12 项否定偏好命中/一次性否定不误伤回归（Issue #82）
 - `app/memory/manager.py`：闸 1 信号补否定式长期偏好（“不要每次/以后别/don't always”等），一次性否定仍不误命中（Issue #82）

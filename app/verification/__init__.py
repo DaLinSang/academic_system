@@ -5,6 +5,7 @@ from app.verification.verifier import (
     SemanticVerifier,
     is_insufficient_answer,
     is_insufficient_claim,
+    is_nonfactual_claim,
     split_claims,
 )
 
@@ -13,5 +14,6 @@ __all__ = [
     "SemanticVerifier",
     "is_insufficient_answer",
     "is_insufficient_claim",
+    "is_nonfactual_claim",
     "split_claims",
 ]

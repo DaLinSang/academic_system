@@ -415,7 +415,8 @@ def main() -> None:
             key="evaluation_mode",
             on_change=_sync_mode_flags,
         )
-        top_k = st.slider("检索 Top-K", 1, 10, 3)
+        top_k = st.slider("检索 Top-K", 1, 10, 5)
+        st.caption("精确问答通常保持默认即可；综述或多文档比较会自动扩展到至少 6 条证据。")
         enable_memory = st.checkbox("启用长期记忆", key="enable_memory")
         enable_verification = st.checkbox(
             "启用 Claim Verification",
