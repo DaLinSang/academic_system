@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -33,20 +34,31 @@ from app.ui.presenters import (
 _APP_CSS = """
 <style>
 :root {
-  --aa-bg: #f7f7f4;
-  --aa-panel: #ffffff;
-  --aa-sidebar: #f0f0ec;
-  --aa-border: #deded8;
-  --aa-text-soft: #65655f;
-  --aa-accent: #385f55;
-  --aa-accent-soft: #e6efeb;
+  --aa-bg: light-dark(#f7f8fa, #0f1216);
+  --aa-panel: light-dark(#ffffff, #181c22);
+  --aa-sidebar: light-dark(#f1f3f6, #14181e);
+  --aa-border: light-dark(#dfe3e8, #303640);
+  --aa-border-strong: light-dark(#c2c9d2, #4a5360);
+  --aa-text: light-dark(#20262e, #e8ebef);
+  --aa-text-soft: light-dark(#68717d, #a5aeba);
+  --aa-accent: light-dark(#304a67, #82a9d0);
+  --aa-accent-soft: light-dark(#e6edf4, #25374a);
+  --aa-success: light-dark(#3e7b5b, #71b493);
+  --aa-input: light-dark(#ffffff, #1b2027);
+  --aa-rail: light-dark(rgba(255,255,255,.62), rgba(20,24,30,.82));
+  --aa-shadow: light-dark(rgba(29,42,57,.10), rgba(0,0,0,.30));
 }
-[data-testid="stAppViewContainer"] { background: var(--aa-bg); color: #242421; }
-[data-testid="stHeader"] { background: transparent; }
+[data-testid="stAppViewContainer"] {
+  background: var(--aa-bg);
+  color: var(--aa-text);
+  font-size: 15px;
+}
+[data-testid="stHeader"] { background: transparent; height: 2.25rem; }
+[data-testid="stToolbar"] { background: transparent; }
 [data-testid="stSidebar"] {
   background: var(--aa-sidebar);
   border-right: 1px solid var(--aa-border);
-  color: #242421;
+  color: var(--aa-text);
 }
 [data-testid="stAppViewContainer"] p,
 [data-testid="stAppViewContainer"] label,
@@ -57,53 +69,165 @@ _APP_CSS = """
 [data-testid="stSidebar"] label,
 [data-testid="stSidebar"] h1,
 [data-testid="stSidebar"] h2,
-[data-testid="stSidebar"] h3 { color: #242421; }
-[data-testid="stSidebar"] .block-container { padding-top: 1.25rem; }
-.block-container {
-  max-width: 1680px;
-  padding-top: 1.25rem;
-  padding-bottom: 6.5rem;
+[data-testid="stSidebar"] h3 { color: var(--aa-text); }
+[data-testid="stSidebar"] .block-container {
+  padding-top: 1.1rem;
+  padding-left: .85rem;
+  padding-right: .85rem;
 }
-h1, h2, h3 { letter-spacing: -0.02em; }
+.block-container {
+  max-width: 1460px;
+  padding-top: .75rem;
+  padding-bottom: 6.5rem;
+  padding-left: 2rem;
+  padding-right: 2rem;
+}
+h1, h2, h3 { letter-spacing: -0.025em; }
+.aa-hero { padding: .35rem 0 1.35rem; border-bottom: 1px solid var(--aa-border); margin-bottom: 1.2rem; }
+.aa-hero-kicker {
+  color: var(--aa-accent);
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  margin-bottom: .38rem;
+}
+.aa-hero h1 {
+  color: var(--aa-text);
+  font-size: 2rem;
+  line-height: 1.16;
+  font-weight: 650;
+  margin: 0 0 .42rem;
+}
+.aa-hero p { color: var(--aa-text-soft) !important; font-size: .9rem; margin: 0; }
 [data-testid="stChatMessage"] {
-  background: rgba(255,255,255,.72);
-  border: 1px solid var(--aa-border);
-  border-radius: 16px;
-  padding: .25rem .4rem;
-  margin-bottom: .65rem;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--aa-border);
+  border-radius: 0;
+  padding: .65rem .2rem 1rem;
+  margin-bottom: .35rem;
 }
 [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] p {
-  line-height: 1.72;
+  line-height: 1.68;
+  font-size: .96rem;
+  max-width: 78ch;
+}
+[data-testid="stChatMessageAvatarUser"],
+[data-testid="stChatMessageAvatarAssistant"] {
+  background: var(--aa-accent-soft);
+  border: 1px solid var(--aa-border);
+  color: var(--aa-accent);
 }
 [data-testid="stExpander"] {
-  background: rgba(255,255,255,.62);
+  background: var(--aa-panel);
   border: 1px solid var(--aa-border);
-  border-radius: 12px;
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(28, 39, 50, .025);
 }
-[data-testid="stExpander"] details summary { background: transparent; color: #242421; }
+[data-testid="stExpander"] details summary {
+  background: transparent;
+  color: var(--aa-text);
+  font-size: .86rem;
+  font-weight: 600;
+}
+[data-testid="stExpander"] details summary:hover { background: var(--aa-accent-soft); }
+[data-testid="stExpander"] details summary svg { fill: var(--aa-accent) !important; }
 [data-testid="stFileUploader"] { border-radius: 12px; }
 .stTextInput input, .stTextArea textarea,
 [data-testid="stChatInput"] textarea,
 [data-baseweb="select"] > div {
-  background: #ffffff !important;
-  color: #242421 !important;
+  background: var(--aa-input) !important;
+  color: var(--aa-text) !important;
   border-color: var(--aa-border) !important;
 }
 .stTextInput input::placeholder, .stTextArea textarea::placeholder,
 [data-testid="stChatInput"] textarea::placeholder { color: #77776f !important; }
-.aa-kicker { color: var(--aa-accent); font-weight: 650; font-size: .78rem; }
+.aa-kicker {
+  color: var(--aa-accent);
+  font-weight: 700;
+  font-size: .68rem;
+  letter-spacing: .11em;
+  padding: .15rem .25rem .75rem;
+}
 .aa-muted { color: var(--aa-text-soft); font-size: .82rem; }
 .aa-session-meta { color: var(--aa-text-soft); font-size: .72rem; margin-top: -.45rem; }
 .right-rail-marker { display: none; }
+.aa-rail-header { padding: .2rem .15rem .85rem; }
+.aa-rail-title { color: var(--aa-text); font-size: .92rem; font-weight: 650; }
+.aa-rail-subtitle { color: var(--aa-text-soft); font-size: .72rem; margin-top: .12rem; }
 button[kind="primary"] {
-  background: var(--aa-accent);
-  border-color: var(--aa-accent);
-  color: #ffffff;
+  background: var(--aa-accent) !important;
+  border-color: var(--aa-accent) !important;
+  color: #ffffff !important;
 }
 button[kind="secondary"] {
-  background: rgba(255,255,255,.78);
-  border-color: var(--aa-border);
-  color: #242421;
+  background: var(--aa-input) !important;
+  border-color: var(--aa-border-strong) !important;
+  color: var(--aa-text) !important;
+}
+button[kind="primary"] p, button[kind="primary"] span,
+button[kind="secondary"] p, button[kind="secondary"] span {
+  color: inherit !important;
+}
+button[kind="secondary"]:hover {
+  background: var(--aa-accent-soft) !important;
+  border-color: var(--aa-accent) !important;
+}
+[data-testid="stSidebar"] button {
+  border-radius: 8px;
+  min-height: 2.35rem;
+  text-align: left;
+}
+[data-testid="stSidebar"] [data-testid="stPopover"] button {
+  text-align: center;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+[data-testid="stSidebar"] [data-testid="stPopoverButton"]
+[data-testid="stMarkdownContainer"],
+[data-testid="stSidebar"] [data-testid="stPopoverButton"]
+> div > div:last-child {
+  display: none !important;
+}
+[data-testid="stSidebarCollapseButton"] button,
+[data-testid="stSidebarCollapsedControl"] button,
+[data-testid="stExpandSidebarButton"] {
+  background: var(--aa-accent) !important;
+  color: #ffffff !important;
+  border: 1px solid var(--aa-accent) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 2px 8px var(--aa-shadow);
+}
+[data-testid="stSidebarCollapseButton"] button svg,
+[data-testid="stSidebarCollapsedControl"] button svg,
+[data-testid="stExpandSidebarButton"] [data-testid="stIconMaterial"] {
+  fill: #ffffff !important;
+  color: #ffffff !important;
+}
+[data-testid="stChatInput"] {
+  background: var(--aa-input) !important;
+  border: 1px solid var(--aa-border-strong) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 5px 18px var(--aa-shadow);
+}
+[data-testid="stChatInput"] > div { background: var(--aa-input) !important; }
+[data-testid="stChatInputSubmitButton"] {
+  background: var(--aa-accent) !important;
+  color: #ffffff !important;
+  border-radius: 8px !important;
+}
+[data-testid="stSidebar"] [data-testid="stTextInput"] label,
+div[data-testid="stHorizontalBlock"]:has(.right-rail-marker) label,
+div[data-testid="stHorizontalBlock"]:has(.right-rail-marker) p {
+  font-size: .8rem;
+}
+div[data-testid="stHorizontalBlock"]:has(.right-rail-marker)
+> div[data-testid="stColumn"]:last-child {
+  background: var(--aa-rail);
+  border: 1px solid var(--aa-border);
+  border-radius: 12px;
+  padding: .8rem;
 }
 button:focus-visible, input:focus-visible, textarea:focus-visible {
   outline: 3px solid rgba(56,95,85,.25) !important;
@@ -113,15 +237,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   div[data-testid="stHorizontalBlock"]:has(.right-rail-marker)
   > div[data-testid="stColumn"]:last-child {
     position: sticky;
-    top: 1rem;
+    top: 3.75rem;
     align-self: flex-start;
-    max-height: calc(100vh - 2rem);
+    max-height: calc(100vh - 4.5rem);
     overflow-y: auto;
-    padding-right: .2rem;
+    scrollbar-width: thin;
   }
 }
 @media (max-width: 1099px) {
   .block-container { padding-left: 1rem; padding-right: 1rem; }
+  .aa-hero h1 { font-size: 1.7rem; }
   div[data-testid="stHorizontalBlock"]:has(.right-rail-marker) {
     flex-direction: column;
   }
@@ -478,10 +603,89 @@ def _select_session(session_id: str) -> None:
     st.rerun()
 
 
-def _render_session_sidebar(store: SessionStore) -> tuple[str, str]:
+def _session_group(timestamp: str) -> str:
+    """Group session timestamps like Codex without changing storage semantics."""
+    try:
+        day = datetime.strptime(timestamp, "%Y-%m-%d %H:%M").date()
+    except (TypeError, ValueError):
+        return "更早"
+    if day == date.today():
+        return "今天"
+    if day == date.today() - timedelta(days=1):
+        return "昨天"
+    return "更早"
+
+
+def _render_session_actions(
+    store: SessionStore,
+    *,
+    user_id: str,
+    item: dict[str, Any],
+    session_ids: list[str],
+) -> None:
+    """Render the stable three-dot alternative to a browser context menu."""
+    session_id = item["session_id"]
+    with st.popover(
+        "更多操作",
+        icon=":material/more_horiz:",
+        help="重命名、清空或删除会话",
+        key=f"session-menu-{user_id}-{session_id}",
+        use_container_width=True,
+    ):
+        st.caption(session_id)
+        rename_id = st.text_input(
+            "会话名称",
+            value=session_id,
+            key=f"rename-{user_id}-{session_id}",
+        )
+        if st.button(
+            "重命名",
+            key=f"rename-button-{user_id}-{session_id}",
+            use_container_width=True,
+        ):
+            try:
+                target = rename_id.strip()
+                store.rename(user_id, session_id, target)
+                if item["selected"]:
+                    _select_session(target)
+                st.rerun()
+            except (ValueError, OSError) as exc:
+                st.error(f"重命名失败：{exc}")
+        if st.button(
+            "清空对话",
+            key=f"clear-button-{user_id}-{session_id}",
+            use_container_width=True,
+        ):
+            store.clear(user_id, session_id)
+            store.create(user_id, session_id)
+            if item["selected"]:
+                st.session_state.history = []
+                st.session_state.loaded_session = (user_id, session_id)
+            st.rerun()
+        confirm_delete = st.checkbox(
+            "确认删除", key=f"confirm-delete-{user_id}-{session_id}"
+        )
+        if st.button(
+            "删除会话",
+            key=f"delete-button-{user_id}-{session_id}",
+            disabled=not confirm_delete,
+            use_container_width=True,
+        ):
+            store.clear(user_id, session_id)
+            if item["selected"]:
+                remaining = [value for value in session_ids if value != session_id]
+                target = remaining[0] if remaining else _new_session_id()
+                store.create(user_id, target)
+                _select_session(target)
+            st.rerun()
+
+
+def _render_session_sidebar(
+    store: SessionStore,
+) -> tuple[str, str, str, str, int, bool, bool]:
     """Render a scan-friendly, user-isolated conversation list."""
     with st.sidebar:
-        st.markdown('<div class="aa-kicker">ACADEMIC ASSISTANT</div>', unsafe_allow_html=True)
+        st.markdown('<div class="aa-kicker">ACADEMIC RESEARCH</div>', unsafe_allow_html=True)
         st.subheader("会话")
         user_id = st.text_input("用户 ID", key="user_id").strip()
         try:
@@ -502,78 +706,42 @@ def _render_session_sidebar(store: SessionStore) -> tuple[str, str]:
             store.create(user_id, target)
             _select_session(target)
 
-        st.caption("最近会话")
-        for item in session_navigation_items(sessions, current):
-            selected = "● " if item["selected"] else ""
-            label = f"{selected}{item['session_id']} · {item['summary'][:30]}"
-            if st.button(
-                label,
-                key=f"session-open-{user_id}-{item['session_id']}",
-                type="primary" if item["selected"] else "secondary",
-                use_container_width=True,
-                help=(
-                    f"{item['turn_count']} 轮"
-                    + (f" · {item['timestamp']}" if item["timestamp"] else "")
-                ),
-            ) and not item["selected"]:
-                _select_session(item["session_id"])
+        navigation = session_navigation_items(sessions, current)
+        grouped = {"今天": [], "昨天": [], "更早": []}
+        for item in navigation:
+            grouped[_session_group(item["timestamp"])].append(item)
+        for group, items in grouped.items():
+            if not items:
+                continue
+            st.caption(group)
+            for item in items:
+                row, actions = st.columns([4.7, 1.3], gap="small")
+                selected = "● " if item["selected"] else ""
+                label = f"{selected}{item['summary'][:25]}"
+                if row.button(
+                    label,
+                    key=f"session-open-{user_id}-{item['session_id']}",
+                    type="primary" if item["selected"] else "secondary",
+                    use_container_width=True,
+                    help=(
+                        f"{item['session_id']} · {item['turn_count']} 轮"
+                        + (f" · {item['timestamp']}" if item["timestamp"] else "")
+                    ),
+                ) and not item["selected"]:
+                    _select_session(item["session_id"])
+                with actions:
+                    _render_session_actions(
+                        store,
+                        user_id=user_id,
+                        item=item,
+                        session_ids=session_ids,
+                    )
 
         session_id = current
-        with st.expander("管理当前会话", expanded=False):
-            st.caption(f"当前：{session_id}")
-            rename_id = st.text_input(
-                "会话名称", value=session_id, key=f"rename-{user_id}-{session_id}"
+        with st.expander("设置", expanded=False):
+            runtime = st.radio(
+                "运行链路", ["Mock", "Real"], horizontal=True, key="runtime"
             )
-            rename_col, delete_col = st.columns(2)
-            if rename_col.button(
-                "重命名", key=f"rename-button-{session_id}", use_container_width=True
-            ):
-                try:
-                    store.rename(user_id, session_id, rename_id.strip())
-                    _select_session(rename_id.strip())
-                except (ValueError, OSError) as exc:
-                    st.error(f"重命名失败：{exc}")
-            if delete_col.button(
-                "删除", key=f"delete-button-{session_id}", use_container_width=True
-            ):
-                store.clear(user_id, session_id)
-                remaining = [item for item in session_ids if item != session_id]
-                target = remaining[0] if remaining else _new_session_id()
-                store.create(user_id, target)
-                _select_session(target)
-            if st.button(
-                "清空对话内容",
-                key=f"clear-button-{session_id}",
-                use_container_width=True,
-            ):
-                store.clear(user_id, session_id)
-                store.create(user_id, session_id)
-                st.session_state.history = []
-                st.session_state.loaded_session = (user_id, session_id)
-                st.rerun()
-        st.caption("共享文档库 · 会话按用户隔离")
-    return user_id, session_id
-
-
-def main() -> None:
-    st.set_page_config(page_title="Academic Agent", page_icon="A", layout="wide")
-    st.markdown(_APP_CSS, unsafe_allow_html=True)
-    if "evaluation_mode" not in st.session_state:
-        st.session_state.evaluation_mode = "B4"
-        _sync_mode_flags()
-
-    store = _session_store()
-    st.session_state.setdefault("user_id", settings.runtime.default_user_id)
-    st.session_state.setdefault("session_selector", "streamlit")
-    pending = st.session_state.pop("pending_session_id", None)
-    if pending:
-        st.session_state.session_selector = pending
-    user_id, session_id = _render_session_sidebar(store)
-    chat_col, info_col = st.columns([3.15, 1.15], gap="large")
-    with info_col:
-        st.markdown('<span class="right-rail-marker"></span>', unsafe_allow_html=True)
-        with st.expander("运行设置", expanded=True):
-            runtime = st.radio("运行链路", ["Mock", "Real"], horizontal=True)
             mode = st.selectbox(
                 "评测模式",
                 sorted(MODE_PRESETS),
@@ -585,8 +753,43 @@ def main() -> None:
             enable_verification = st.checkbox(
                 "Claim Verification", key="enable_verification"
             )
-            st.caption("综述和多文档比较会自动扩展到至少 6 条证据。")
             st.caption("Real 使用 .env 模型；Mock 无需 API 或数据库。")
+        st.caption("共享文档库 · 会话按用户隔离")
+    return (
+        user_id,
+        session_id,
+        runtime,
+        mode,
+        top_k,
+        enable_memory,
+        enable_verification,
+    )
+
+
+def main() -> None:
+    st.set_page_config(page_title="Academic Agent", page_icon="A", layout="wide")
+    st.markdown(_APP_CSS, unsafe_allow_html=True)
+    if "evaluation_mode" not in st.session_state:
+        st.session_state.evaluation_mode = "B4"
+        _sync_mode_flags()
+    st.session_state.setdefault("runtime", "Mock")
+    st.session_state.setdefault("inspector_open", True)
+
+    store = _session_store()
+    st.session_state.setdefault("user_id", settings.runtime.default_user_id)
+    st.session_state.setdefault("session_selector", "streamlit")
+    pending = st.session_state.pop("pending_session_id", None)
+    if pending:
+        st.session_state.session_selector = pending
+    (
+        user_id,
+        session_id,
+        runtime,
+        mode,
+        top_k,
+        enable_memory,
+        enable_verification,
+    ) = _render_session_sidebar(store)
 
     orch = _get_orchestrator(runtime, top_k)
     if st.session_state.get("loaded_session") != (user_id, session_id):
@@ -597,10 +800,20 @@ def main() -> None:
     uploaded_documents, indexed_documents = _document_counts(
         persisted_indexes, runtime
     )
+    inspector_open = bool(st.session_state.inspector_open)
+    chat_col, info_col = st.columns(
+        [3.75, 1.15] if inspector_open else [4.7, 0.65], gap="large"
+    )
 
     with chat_col:
-        st.title("Agentic Academic Assistant")
-        st.caption("文档问答 · 页码引用 · 长期记忆 · Claim Verification")
+        st.markdown(
+            '<section class="aa-hero">'
+            '<div class="aa-hero-kicker">Evidence-grounded research assistant</div>'
+            '<h1>Agentic Academic Assistant</h1>'
+            '<p>面向课程讲义与研究文献的检索、引用、记忆与 Claim Verification</p>'
+            '</section>',
+            unsafe_allow_html=True,
+        )
         for item in st.session_state.history:
             with st.chat_message("user"):
                 st.markdown(item["question"])
@@ -659,17 +872,44 @@ def main() -> None:
                 st.error(f"运行失败：{type(exc).__name__}: {exc}")
 
     with info_col:
-        with st.expander(
-            f"文档状态 · {uploaded_documents} 个文件", expanded=True
+        st.markdown('<span class="right-rail-marker"></span>', unsafe_allow_html=True)
+        if inspector_open:
+            rail_title, rail_toggle = st.columns([3.8, 1.5], gap="small")
+            with rail_title:
+                st.markdown(
+                    '<div class="aa-rail-header"><div class="aa-rail-title">资料与记忆</div>'
+                    '<div class="aa-rail-subtitle">固定在右侧，可独立展开</div></div>',
+                    unsafe_allow_html=True,
+                )
+            if rail_toggle.button(
+                "×",
+                key="inspector-close",
+                help="收起资料与记忆",
+                use_container_width=True,
+            ):
+                st.session_state.inspector_open = False
+                st.rerun()
+            with st.expander(
+                f"文档状态 · {uploaded_documents} 个文件", expanded=True
+            ):
+                _render_documents(persisted_indexes, index_status_error)
+            latest_state = (
+                st.session_state.history[-1]["state"]
+                if st.session_state.history
+                else None
+            )
+            with st.expander("长期记忆", expanded=False):
+                _render_memories(
+                    orch, user_id, session_id, enable_memory, latest_state
+                )
+        elif st.button(
+            "展开",
+            key="inspector-open",
+            help="展开资料与记忆",
+            use_container_width=True,
         ):
-            _render_documents(persisted_indexes, index_status_error)
-        latest_state = (
-            st.session_state.history[-1]["state"]
-            if st.session_state.history
-            else None
-        )
-        with st.expander("长期记忆", expanded=False):
-            _render_memories(orch, user_id, session_id, enable_memory, latest_state)
+            st.session_state.inspector_open = True
+            st.rerun()
 
 
 if __name__ == "__main__":

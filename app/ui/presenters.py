@@ -234,12 +234,18 @@ def session_navigation_items(
     for item in sessions:
         session_id = str(item.get("session_id") or "")
         question = str(item.get("last_question") or "").strip()
+        if question:
+            summary = question
+        elif session_id.startswith("chat-"):
+            summary = "新会话"
+        else:
+            summary = session_id
         last_at = str(item.get("last_at") or "")
         timestamp = last_at[:16].replace("T", " ") if last_at else ""
         rows.append(
             {
                 "session_id": session_id,
-                "summary": question or "新会话",
+                "summary": summary,
                 "timestamp": timestamp,
                 "turn_count": int(item.get("turn_count", 0) or 0),
                 "selected": session_id == current_session_id,

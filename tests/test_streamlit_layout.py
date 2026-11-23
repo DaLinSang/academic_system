@@ -1,4 +1,4 @@
-"""Structural smoke tests for the Issue #91 Streamlit layout."""
+"""Structural smoke tests for the Codex-style Streamlit layout."""
 
 from pathlib import Path
 
@@ -12,8 +12,7 @@ def test_chat_layout_exposes_session_list_right_rail_and_input() -> None:
 
     assert not app.exception
     assert any("新建会话" in button.label for button in app.button)
-    assert any("管理当前会话" in expander.label for expander in app.expander)
-    assert any(expander.label == "运行设置" for expander in app.expander)
+    assert any(expander.label == "设置" for expander in app.expander)
     assert any(expander.label.startswith("文档状态") for expander in app.expander)
     assert any(expander.label == "长期记忆" for expander in app.expander)
     assert any(
