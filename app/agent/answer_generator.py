@@ -130,14 +130,18 @@ class LLMAnswerGenerator:
             return self._generate_from_evidence(state)
         prompt = (
             "请只根据下面这份完整文档生成中文总结。请覆盖文档主题、背景/目标、"
-            "方法或结构、主要内容、结论和局限；不要声称文档中不存在的信息。"
-            "这是全文读取路径，不要编造页码或引用编号。\n\n"
+            "方法或结构、主要内容、结论和局限；不要声称文档中不存在的信息。\n\n"
             f"文件：{state.document_file_name}\n全文：\n{text}\n\n"
             f"用户问题：{state.question}"
         )
         try:
             response = self.llm.generate(
-                [{"role": "system", "content": _SYSTEM_PROMPT},
+                [{"role": "system", "content": (
+                    "你是学术知识助手。只依据提供的单篇 PDF 原文回答。"
+                    "文中的 [Page N] 是原始 PDF 页码；如果能明确定位事实，可以写“第 N 页”，"
+                    "无法定位时不要编造页码。不要生成 [1] 形式的检索引用编号。"
+                    "对于文档没有说明的事情要明确说资料不足。"
+                )},
                  {"role": "user", "content": prompt}],
                 temperature=self.temperature,
             )

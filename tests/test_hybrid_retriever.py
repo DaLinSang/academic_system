@@ -143,6 +143,31 @@ def test_index_document_invalidates_bm25_cache(monkeypatch) -> None:
     assert retriever._bm25_loaded is False
 
 
+def test_rebuild_page_removes_chunk_overlap() -> None:
+    first = DocumentChunk(
+        chunk_id="demo:p1:c0", document_id="demo", file_name="demo.pdf",
+        page_number=1, text="abcdefgh", char_start=10, char_end=18,
+    )
+    second = DocumentChunk(
+        chunk_id="demo:p1:c1", document_id="demo", file_name="demo.pdf",
+        page_number=1, text="efghijkl", char_start=14, char_end=22,
+    )
+    assert HybridRetriever._rebuild_page([second, first]) == "abcdefghijkl"
+
+
+def test_rebuild_page_rejects_missing_content() -> None:
+    first = DocumentChunk(
+        chunk_id="demo:p1:c0", document_id="demo", file_name="demo.pdf",
+        page_number=1, text="abc", char_start=0, char_end=3,
+    )
+    second = DocumentChunk(
+        chunk_id="demo:p1:c1", document_id="demo", file_name="demo.pdf",
+        page_number=1, text="xyz", char_start=5, char_end=8,
+    )
+    with pytest.raises(RetrievalError, match="Incomplete page chunks"):
+        HybridRetriever._rebuild_page([first, second])
+
+
 def test_index_document_rejects_image_pdf_without_ocr(monkeypatch) -> None:
     retriever = HybridRetriever(embedder=FakeEmbedder())
     monkeypatch.setattr(hybrid_retriever, "parse_pdf", lambda *args, **kwargs: [])

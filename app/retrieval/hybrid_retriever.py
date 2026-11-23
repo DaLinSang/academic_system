@@ -159,12 +159,11 @@ class HybridRetriever:
                 for chunk in chunks
             ]
 
-            page_rows = []
-            by_page: dict[int, list[str]] = {}
+            by_page: dict[int, list[DocumentChunk]] = {}
             for chunk in chunks:
-                by_page.setdefault(chunk.page_number, []).append(chunk.text)
+                by_page.setdefault(chunk.page_number, []).append(chunk)
             page_rows = [
-                (resolved_document_id, chunks[0].file_name, page, "\n".join(parts))
+                (resolved_document_id, chunks[0].file_name, page, self._rebuild_page(parts))
                 for page, parts in sorted(by_page.items())
             ]
 
@@ -215,6 +214,25 @@ class HybridRetriever:
         self._bm25_loaded = False
         return len(chunks)
 
+    @staticmethod
+    def _rebuild_page(chunks: list[DocumentChunk]) -> str:
+        """Restore a page from overlapping chunks without duplicating overlap."""
+        ordered = sorted(chunks, key=lambda c: (c.char_start or 0, c.chunk_id))
+        if all(c.char_start is not None and c.char_end is not None for c in ordered):
+            page_start = ordered[0].char_start
+            pieces: list[str] = []
+            end = page_start
+            for chunk in ordered:
+                if chunk.char_start > end:
+                    # A gap means the source cannot be reconstructed faithfully.
+                    raise RetrievalError(f"Incomplete page chunks: {chunk.file_name} p.{chunk.page_number}")
+                skip = max(0, end - chunk.char_start)
+                pieces.append(chunk.text[skip:])
+                end = max(end, chunk.char_end)
+            return "".join(pieces)
+        # Older/imported chunks may have no offsets; preserve all content.
+        return "\n".join(chunk.text for chunk in ordered)
+
     def read_document(self, file_name: str) -> str:
         """Return the persisted OCR/parsed text in page order.
 
@@ -224,7 +242,7 @@ class HybridRetriever:
         try:
             with self._connect() as conn:
                 rows = conn.execute(
-                    """SELECT text FROM document_pages
+                    """SELECT page_number, text FROM document_pages
                        WHERE file_name = %s ORDER BY page_number""",
                     (file_name,),
                 ).fetchall()
@@ -232,22 +250,19 @@ class HybridRetriever:
             raise RetrievalError(f"Failed to read document {file_name}: {exc}") from exc
         if not rows:
             raise RetrievalError(f"Document is not indexed: {file_name}")
-        return "\n\n".join(str(row[0]) for row in rows)
+        return "\n\n".join(f"[Page {page}]\n{text}" for page, text in rows)
 
     def delete_document(self, file_name: str) -> bool:
         """Delete a PDF and its persisted page cache by visible file name."""
         try:
             with self._connect() as conn:
-                rows = conn.execute(
-                    "SELECT DISTINCT document_id FROM document_chunks WHERE file_name=%s",
-                    (file_name,),
-                ).fetchall()
-                if not rows:
-                    return False
-                conn.execute("DELETE FROM document_chunks WHERE file_name=%s", (file_name,))
-                conn.execute("DELETE FROM document_pages WHERE file_name=%s", (file_name,))
+                chunks = conn.execute("DELETE FROM document_chunks WHERE file_name=%s", (file_name,))
+                pages = conn.execute("DELETE FROM document_pages WHERE file_name=%s", (file_name,))
                 conn.commit()
+            if not chunks.rowcount and not pages.rowcount:
+                return False
             self._bm25_loaded = False
+            self._bm25 = BM25Retriever()
             return True
         except Exception as exc:
             raise RetrievalError(f"Failed to delete document {file_name}: {exc}") from exc

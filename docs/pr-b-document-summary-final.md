@@ -18,6 +18,8 @@ PDF/OCR -> DocumentChunk -> document_chunks + document_pages
 
 `document_pages` stores cleaned text for every indexed page and survives Streamlit reruns and process restarts. The existing chunk/vector table remains the source for ordinary retrieval and citations.
 
+The page cache reconstructs text from chunk offsets, removing the deliberate chunk overlap. `read_document()` includes page labels; `delete_document()` clears both database tables and invalidates the current retriever's BM25 cache. It does not remove the uploaded PDF from the filesystem; the upload owner must handle that separately.
+
 ## How A should use it
 
 The orchestrator detects an explicit single-PDF summary and loads the full text before generation. The UI can make this deterministic by passing the selected filename. Full-text summaries must not invent page citations; factual questions should remain on the cited RAG path.
