@@ -382,8 +382,9 @@ class Orchestrator:
         （实测"总结 rag_paper.pdf 的..."拆出的子查询只剩"研究目标..."），
         导致 Retriever 的来源限定失效。这里统一补：
           1. 原问题里显式出现的 .pdf 文件名（子查询没带时才补）
-          2. 短指代追问的最近用户问题（只用 question，不用助手回答当事实）
-        两份信息都只是查询上下文，不作为证据——证据仍来自本轮检索。
+          2. 章节约束 Chapter N / ChapterN-Topic（Issue #99，与 #64 同一做法）
+          3. 短指代追问的最近用户问题（只用 question，不用助手回答当事实）
+        这些信息都只是查询上下文，不作为证据——证据仍来自本轮检索。
         """
         enriched = query
         # 1) 文件名来源约束
@@ -391,6 +392,27 @@ class Orchestrator:
         missing_files = [f for f in original_files if f.casefold() not in enriched.casefold()]
         if missing_files:
             enriched = f"{' '.join(missing_files)} {enriched}"
+
+        # 2) Chapter 来源约束（Issue #99）
+        # B 的 document_scope 靠 "Chapter N" + 可选英文主题锁定唯一章节文件。
+        # Planner 拆多步时后续子查询常丢掉章节号（实测 "Apriori FP-Growth..."），
+        # 这里把原问题的章节指代补回，否则会串到 Chapter10 等其他章节。
+        chapter_refs = re.findall(
+            r"chapter[\s_-]*0*\d+(?:[\s_-]+[a-z][a-z\s_-]*)?",
+            state.question, re.I,
+        )
+        missing_chapters: list[str] = []
+        for chapter_ref in chapter_refs:
+            chapter_ref = chapter_ref.strip()
+            # 已有相同章节号就不重复补（比 whole ref 更宽松，避免主题词写法差异）
+            chapter_no = re.search(r"0*(\d+)", chapter_ref, re.I)
+            already = chapter_no and re.search(
+                rf"chapter[\s_-]*0*{int(chapter_no.group(1))}(?!\d)", enriched, re.I
+            )
+            if not already:
+                missing_chapters.append(chapter_ref)
+        if missing_chapters:
+            enriched = f"{' '.join(missing_chapters)} {enriched}"
 
         # Numbered lecture titles are source constraints too (Issue #72).
         # Keep them when a planner reduces "Lecture6 的 language" to "language".
