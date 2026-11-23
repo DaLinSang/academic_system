@@ -45,7 +45,7 @@ class SeqLLM:
     def generate(self, messages, **kwargs):
         self.calls += 1
         text = self.extraction if self.calls == 1 else self.verdict
-        return LLMResponse(text=text, usage=Usage(total_tokens=20), model="fake")
+        return LLMResponse(text=text, usage=Usage(total_tokens=20, llm_calls=1), model="fake")
 
 
 # --------------------------------------------------------------------------- #
@@ -123,3 +123,32 @@ def test_memory_write_note_not_fooled_by_update_only():
         stage="memory_write", event="end", detail={"stored": 0, "updated": 1}
     ))
     assert Orchestrator._memory_write_note(state) == ""
+
+
+# --------------------------------------------------------------------------- #
+# Issue #97 review：RQ4 usage 必须累计矛盾判定调用
+# --------------------------------------------------------------------------- #
+def test_contradiction_verdict_usage_is_counted():
+    """抽取 1 次 + 矛盾判定 1 次 = 2 calls、40 tokens，不能只记抽取那次。"""
+    mgr = LLMMemoryManager(SeqLLM())
+    mgr.extract_candidates(
+        "请记住以后不要每次都带 RAG 相关内容了", "好的", [OLD_RAG]
+    )
+    assert mgr.last_usage.llm_calls == 2, "抽取+矛盾判定都该计入 calls"
+    assert mgr.last_usage.total_tokens == 40
+    assert mgr.last_stats["contradictions_checked"] == 1
+
+
+def test_multiple_candidates_usage_accumulated():
+    """多候选各判定一次，usage 要全部累加。"""
+    multi = ('{"memories":['
+             '{"tier":"preference","content":"用户希望不再附带 RAG","importance":0.8,"reason":"a"},'
+             '{"tier":"profile","content":"用户正在写 RAG 报告","importance":0.9,"reason":"b"}]}')
+    mgr = LLMMemoryManager(SeqLLM(extraction=multi, verdict="1. no"))
+    mgr.extract_candidates(
+        "请记住以后不要带 RAG 了，我是港大的", "好的", [OLD_RAG, OLD_PROFILE]
+    )
+    # 1 次抽取 + 2 次判定（两条候选都不与已有重复，各判一次）
+    assert mgr.last_usage.llm_calls == 3
+    assert mgr.last_usage.total_tokens == 60
+    assert mgr.last_stats["contradictions_checked"] == 2

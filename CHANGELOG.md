@@ -15,7 +15,7 @@
 
 ### Added
 
-- 测试 `tests/test_memory_contradiction_97.py`（8 项）：矛盾更新、非矛盾并存、跨 tier、判定失败不误删、note 不误报（Issue #97）
+- 测试 `tests/test_memory_contradiction_97.py`（10 项）：矛盾更新、非矛盾并存、跨 tier、判定失败不误删、usage 累计与 note 不误报（Issue #97）
 - 测试 `tests/test_web_zero_result_71.py`（6 项）：零结果阻断、不误伤普通问答、结构化诊断不泄漏查询词（Issue #71）
 - 测试 `tests/test_memory_json_contract_70.py`（13 项）：对象/数组兼容、可诊断解析失败、敏感过滤、已记录纠错（Issue #70）
 - 测试 `tests/test_planned_source_64.py`（5 项）：Planner 子查询继承 PDF 来源、指代只用用户问题、trace 记录来源约束（Issue #64）
@@ -99,7 +99,12 @@
 
 ### Changed
 
-- `app/memory/manager.py` / `app/agent/orchestrator.py`：写入前用 LLM 判矛盾偏好，命中则更新旧记忆而非新增；trace 记 contradiction_update（Issue #97）
+- `app/memory/manager.py` / `app/agent/orchestrator.py`：写入前用 LLM 判矛盾偏好，命中则更新旧记忆而非新增；矛盾判定 usage 计入 RQ4；trace 记 contradiction_update（Issue #97）
+- app/ui/presenters.py：区分网页候选全部无关与搜索后端失败，并显示长期记忆新增/矛盾更新/更新失败状态（Issue #89 / #97）
+- app/ui/streamlit_app.py：聊天界面收尾为左侧会话列表、中间聊天、右侧设置/文档/记忆三栏；窄屏自动堆叠（Issue #91）
+- 回答的来源引用、Claim Verification、运行信息默认折叠并显示数量；校验失败和运行异常仍在正文下方提示（Issue #91）
+- 上传 PDF 入口移动到聊天输入附近并复用原索引流程；统一浅色背景、边框、焦点态及深色主题下的可读对比度（Issue #91）
+- app/ui/presenters.py：新增会话导航摘要、回答面板计数及网页搜索进行中状态（Issue #91）
 - `app/verification/verifier.py`：排除指令确认、行为承诺、搜索运行状态和纯页码来源说明，避免非事实元话语被误标 unsupported（Issue #80）
 - `app/ui/streamlit_app.py`：检索 Top-K 默认值由 3 调整为 5，并说明综述/多文档比较会自动扩展到至少 6 条证据（Issue #81）
 - `app/agent/answer_generator.py`：web 已执行 count>0 时纠正“我无法联网”类错误表述，改为“已返回 N 条但无关”（Issue #83）

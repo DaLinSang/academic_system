@@ -309,6 +309,7 @@ def _find_contradiction(
     tier: MemoryTier,
     existing: list[MemoryItem],
     temperature: float = 0.0,
+    usage_sink: list[Usage] | None = None,
 ) -> MemoryItem | None:
     """返回与新候选矛盾的同 tier 旧记忆；无矛盾或判定失败返回 None。
 
@@ -337,6 +338,9 @@ def _find_contradiction(
         )
     except Exception:  # noqa: BLE001 - 判定失败就当不矛盾，绝不误删
         return None
+    # Issue #97 review：这次判定调用也要计入 RQ4，不能丢弃 usage
+    if usage_sink is not None:
+        usage_sink.append(response.usage)
     # 逐行找 "N. yes"，只认第一个明确的 yes（保守：一条候选最多替换一条旧记忆）
     for line in (response.text or "").splitlines():
         match = re.match(r"\s*(\d+)\s*[.、:：]?\s*(yes|no)\b", line, re.I)
@@ -449,10 +453,12 @@ class LLMMemoryManager:
         self.last_stats["contradictions_updated"] = 0
         if accepted and existing_memories:
             to_add: list[MemoryCandidate] = []
+            verdict_usages: list[Usage] = []
             for candidate in accepted:
                 old = _find_contradiction(
                     self.llm, candidate.content, candidate.tier,
                     existing_memories, self.temperature,
+                    usage_sink=verdict_usages,
                 )
                 self.last_stats["contradictions_checked"] += 1
                 if old is not None:
@@ -461,6 +467,10 @@ class LLMMemoryManager:
                     self.last_stats["contradictions_updated"] += 1
                 else:
                     to_add.append(candidate)
+            # Issue #97 review：把每次矛盾判定的 token/call 累加进 last_usage，
+            # 否则 Orchestrator 只吸收抽取那一次，RQ4 系统性低估。
+            for usage in verdict_usages:
+                self.last_usage = self.last_usage.add(usage)
             return to_add
         return accepted
 

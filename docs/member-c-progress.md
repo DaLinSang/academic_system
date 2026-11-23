@@ -1,10 +1,35 @@
 # Member C Progress
 
-更新日期：2026-11-21
+更新日期：2026-11-23
 
-当前开发分支：`feat/c-ocr-upload-memory-feedback`
+当前开发分支：`docs/c-progress-2026-11-22`
 
-基线提交：`origin/main@86ace0f`（已包含 OCR、Web Search、多轮来源约束与 C 侧评测/UI）
+基线提交：`origin/main@591f672`（已包含 PR #85、#86、#87、#94）
+
+## 2026-11-22 冻结状态
+
+- PR #85 已合并：网页搜索已执行但结果无关时，不再错误声称“无法联网”
+- PR #86 已合并：Lecture 文件名来源识别、多页综述和多文档比较证据覆盖
+- PR #87 已合并：指令确认/系统元话语不再误判 unsupported；UI 默认 Top-K 调整为 5
+- Issue #78、#79、#80、#81、#83 已随 PR 合并关闭
+- `uv run pytest -q`、`uv run ruff check .` 在 `df2fb04` 全部通过
+- DeepSeek-V3.2 真实 B4 q001 readiness run 已通过：路由正确、5 条证据、1 条
+  supported claim、引用 precision/recall 均为 1.0、`errors=[]`
+- readiness 结果位于本地 `runs/readiness-2026-11-22/20261122-165757-B4/`，
+  仅用于确认正式实验条件，不作为最终 RQ1-RQ4 研究结果提交
+
+## 2026-11-23 Review 与跟进
+
+- PR #94 已合并并关闭 Issue #91：三栏聊天布局、会话列表、sticky 右栏、
+  折叠证据面板和输入区上传入口已进入 main；A review 与 596 项测试通过
+- PR #92（B，网页结果相关性过滤）已完成 C interface review 并 approve；
+  Evidence、URL、title、diagnostics 与 Claim Verification 接口兼容
+- PR #95（A，LLM 搜索 query 改写）、PR #96（A，Tavily 后端）、PR #98
+  （A，矛盾长期记忆更新）均已完成 C interface review；当前分支与最新 main
+  存在冲突，已请作者更新并重跑后再合并
+- C 已提交 PR #100：UI 向后兼容显示网页候选全部无关、搜索后端失败、
+  长期记忆新增、矛盾更新和更新失败；全量 pytest 与 Ruff 通过
+- PR #93 的 Chapter 来源识别属于 B；C 的来源/校验展示接口无变化，暂无额外修改
 
 ## 任务边界
 
@@ -33,8 +58,10 @@ embedding、数据库或记忆存储。
 - 运行信息从 trace 汇总可核对阶段、耗时、证据/claim/记忆数量，不展示内部思考
 - 新增 OCR 预检测、错误脱敏、来源状态、阶段摘要测试及 Streamlit AppTest
 
-Issue #49 已由负责人在 Issue 评论中改由 A 实现；C 已合入的数据集、runner 和指标
-继续保留，后续只 review 团队冻结模型下的正式实验结果，不重复承担运行任务。
+Issue #49 已由负责人在 Issue 评论中改由 A 实现；C 已合入的数据集、runner、指标、
+失败案例模板和 12-run 汇总能力继续保留。当前代码、模型 API、PostgreSQL/Ollama 与
+50 条数据集均已通过 readiness 检查，A 可在冻结提交上执行正式 50×4×3 实验；C
+负责 review 生成的 12 个 run、指标表和失败案例，不重复承担正式运行任务。
 
 ### Web 来源与会话 UI（Issue #42 / #46）
 
@@ -83,8 +110,9 @@ Issue #49 已由负责人在 Issue 评论中改由 A 实现；C 已合入的数�
 - UI 纯展示逻辑测试和 Mock 浏览器验收
 - 已通过 PR #23 合入 `main`
 
-当前状态：Claim Verification V1 与 Streamlit UI V1 均已进入 `main`。C 的下一阶段
-转为标注数据集、B1-B4 批量评测、指标计算和实验结果展示。
+当前状态：Claim Verification、Streamlit UI、50 条标注集、B1-B4 批量评测、
+RQ1-RQ4 指标和失败案例框架均已进入 `main`。C 的功能开发已完成并进入冻结后的
+实验 review 阶段。
 
 ### Annotated Dataset V1
 
@@ -212,15 +240,11 @@ A 的英文 Router 与 `need_memory` 修复已通过 PR #27 合入 `main`。后�
 
 ## 下一步执行顺序
 
-1. 请团队审核 `annotated_v1` 的 12 条问题、gold route、gold sources 和 claims。
-2. 请团队审核 B1-B4 batch runner 的参数和 run metadata。
-3. 团队审核 `metrics.json` 字段和零分母使用 `null` 的约定。
-4. 继续补充 C 侧接口回归测试：Evidence 页码/文本展示、无效 supporting ID 过滤、
-   当前用户 Memory ID 的更新与删除。
-5. 按 `docs/b-demo.md` 在 Real B2 完成小规模 smoke run，再运行 B3/B4。
-6. 将 `runs/` 汇总接入 Streamlit 实验结果页。
-7. 扩展完整标注集，正式实验重复三次并报告均值 ± 标准差。
-8. 准备固定 Demo 问题、unsupported claim 示例和 `docs/failure-cases.md`。
+1. Review 并合并 PR #100，完成 #89 / #97 的 C 展示口径。
+2. 等 #95、#96、#98 更新最新 main 后复查冲突解决结果和全量测试。
+3. 团队完成 #89、#90、#97 后重新确定最终冻结提交。
+4. A 在最终冻结提交上运行 50 条 × B1-B4 × 3 次正式实验。
+5. C 检查 12 个 run 的 `meta.json`、汇总指标和失败案例，再冻结报告表格。
 
-当前无代码接口阻塞。首批数据集、批量运行器和 RQ1-RQ4 指标计算已完成；Real B2 smoke run 取决于
-PostgreSQL 和 Ollama embedding，真实答案质量及 B3/B4 完整评测还需要聊天模型配置。
+当前 C 新增代码只剩 PR #100 等待 review。正式实验基础设施已具备，但 #89、#90、
+#97 会改变联网、检索和记忆结果，应在这些 PR 全部合并后再运行最终 50×4×3 实验。

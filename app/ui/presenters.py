@@ -190,9 +190,28 @@ def web_search_summary(state: AgentState) -> tuple[str, str]:
         detail = ends[-1].detail
         count = int(detail.get("count", 0) or 0)
         warning = str(detail.get("warning") or "").strip()
+        diagnostics = [
+            row for row in (detail.get("diagnostics") or []) if isinstance(row, dict)
+        ]
         if count:
             suffix = f"；{warning}" if warning else ""
-            return ("success", f"已搜索并取得 {count} 条网页证据{suffix}")
+            return ("success", f"已找到 {count} 条相关网页来源{suffix}")
+        irrelevant = [
+            row for row in diagnostics if row.get("kind") == "irrelevant_results"
+        ]
+        if irrelevant:
+            candidates = sum(int(row.get("candidates", 0) or 0) for row in irrelevant)
+            candidate_text = f"收到 {candidates} 条候选，" if candidates else ""
+            return (
+                "warning",
+                f"网页搜索已执行，{candidate_text}但没有找到与问题相关的可用来源。",
+            )
+        benign_kinds = {"ok", "zero_results", "irrelevant_results"}
+        failures = [
+            row for row in diagnostics if str(row.get("kind") or "") not in benign_kinds
+        ]
+        if failures:
+            return ("error", f"网页搜索失败：{warning or '搜索后端未能返回结果'}")
         if warning:
             return ("warning", f"网页搜索未取得证据：{warning}")
         return ("warning", "网页搜索已执行，但没有取得证据。")
@@ -201,10 +220,52 @@ def web_search_summary(state: AgentState) -> tuple[str, str]:
     if decisions:
         detail = decisions[-1].detail
         if bool(detail.get("should_search")):
-            return ("warning", "已决定联网，但未记录搜索执行结果。")
+            return ("info", "网页搜索进行中，尚未返回结果。")
         reason = str(detail.get("reason") or "本轮无需联网")
         return ("info", f"未触发网页搜索：{reason}")
     return ("info", "未触发网页搜索。")
+
+
+def session_navigation_items(
+    sessions: list[dict[str, Any]], current_session_id: str
+) -> list[dict[str, Any]]:
+    """Build compact, scan-friendly session rows for the left rail."""
+    rows: list[dict[str, Any]] = []
+    for item in sessions:
+        session_id = str(item.get("session_id") or "")
+        question = str(item.get("last_question") or "").strip()
+        last_at = str(item.get("last_at") or "")
+        timestamp = last_at[:16].replace("T", " ") if last_at else ""
+        rows.append(
+            {
+                "session_id": session_id,
+                "summary": question or "新会话",
+                "timestamp": timestamp,
+                "turn_count": int(item.get("turn_count", 0) or 0),
+                "selected": session_id == current_session_id,
+            }
+        )
+    return rows
+
+
+def answer_panel_summary(state: AgentState) -> dict[str, int]:
+    """Return counts used in collapsed answer-detail panel titles."""
+    citations = used_citations(state)
+    unsupported = sum(
+        check.status == ClaimStatus.UNSUPPORTED
+        and not (check.note or "").startswith("UNVERIFIED:")
+        for check in state.claims
+    )
+    unverified = sum(
+        (check.note or "").startswith("UNVERIFIED:") for check in state.claims
+    )
+    return {
+        "citations": len(citations),
+        "claims": len(state.claims),
+        "unsupported": unsupported,
+        "unverified": unverified,
+        "errors": len(state.errors),
+    }
 
 
 def source_status(
@@ -276,7 +337,7 @@ def pipeline_stage_presentations(state: AgentState) -> list[dict[str, Any]]:
         timing = sum(
             event.latency_ms for event in events if event.event == "timing"
         )
-        if any(event.event == "error" for event in events):
+        if any(event.event == "error" or event.event.endswith("_error") for event in events):
             status = "失败"
         elif events[-1].event == "skip":
             status = "跳过"
@@ -300,7 +361,12 @@ def pipeline_stage_presentations(state: AgentState) -> list[dict[str, Any]]:
             elif stage == "memory_read":
                 detail = f"命中 {int(end.get('hits', 0) or 0)} 条"
             elif stage == "memory_write":
-                detail = f"保存 {int(end.get('stored', 0) or 0)} 条"
+                stored = int(end.get("stored", 0) or 0)
+                updated = int(end.get("updated", 0) or 0)
+                parts = [f"新增 {stored} 条"]
+                if updated:
+                    parts.append(f"更新 {updated} 条")
+                detail = "，".join(parts)
         rows.append(
             {
                 "stage": stage,
@@ -319,10 +385,15 @@ def memory_write_summary(state: AgentState) -> tuple[str, str]:
         return ("info", "本轮长期记忆已关闭。")
 
     events = [event for event in state.trace if event.stage == "memory_write"]
-    errors = [event for event in events if event.event == "error"]
+    errors = [
+        event
+        for event in events
+        if event.event == "error" or event.event.endswith("_error")
+    ]
     if errors:
         detail = str(errors[-1].detail.get("error", "未知错误"))
-        return ("error", f"长期记忆写入失败：{detail}")
+        action = "更新" if errors[-1].event == "update_error" else "写入"
+        return ("error", f"长期记忆{action}失败：{detail}")
 
     stats_events = [event for event in events if event.event == "stats"]
     end_events = [event for event in events if event.event == "end"]
@@ -339,6 +410,14 @@ def memory_write_summary(state: AgentState) -> tuple[str, str]:
     proposed = int(stats.get("proposed", 0) or 0)
     accepted = int(stats.get("accepted", 0) or 0)
     stored = int(end_events[-1].detail.get("stored", 0) or 0) if end_events else 0
+    updated = int(end_events[-1].detail.get("updated", 0) or 0) if end_events else 0
+    if stored and updated:
+        return (
+            "success",
+            f"本轮新增 {stored} 条长期记忆，并更新 {updated} 条冲突记忆。",
+        )
+    if updated:
+        return ("success", f"本轮已更新 {updated} 条冲突的长期记忆。")
     if stored:
         return ("success", f"本轮已保存 {stored} 条长期记忆。")
     if accepted and not end_events:

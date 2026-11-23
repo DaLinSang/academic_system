@@ -13,6 +13,7 @@ from app.core.types import DocumentChunk
 _LECTURE = re.compile(r"(?<![a-z0-9])lec(?:ture)?[\s_-]*0*(\d+)(?![a-z0-9])", re.I)
 _COURSE_NUMBER = re.compile(r"(?<![a-z0-9])([a-z]{2,}\d{3,}[a-z]?)[\s_-]+0*(\d+)(?![a-z0-9])", re.I)
 _COURSE = re.compile(r"(?<![a-z0-9])[a-z]{2,}\d{3,}[a-z]?(?![a-z0-9])", re.I)
+_CHAPTER = re.compile(r"(?<![a-z0-9])chapter[\s_-]*0*(\d+)(?![a-z0-9])", re.I)
 _FIELDS = {
     "language": r"(?<![a-z])language(?![a-z])|语言|語言",
     "date": r"(?<![a-z])date(?![a-z])|日期",
@@ -49,6 +50,29 @@ def resolve_scope(query: str, chunks: list[DocumentChunk]) -> DocumentScope:
         return DocumentScope(explicit)
     if re.search(r"[\w.-]+\.pdf\b", query, re.I):
         return DocumentScope(clarification="指定的 PDF 尚未索引，请核对文件名并成功导入后再问。")
+    chapter = _CHAPTER.search(query)
+    if chapter:
+        number = int(chapter.group(1))
+        # Keep an optional English chapter topic, e.g. AssociationRule, while
+        # ignoring Chinese instructions that follow the document title.
+        tail = re.match(r"[\s_-]*([a-z][a-z\s_-]*)", query[chapter.end():], re.I)
+        topic = re.sub(r"[^a-z]", "", tail.group(1).casefold()) if tail else ""
+        candidates = []
+        for name in names:
+            match = _CHAPTER.search(name)
+            if match and int(match.group(1)) == number:
+                stem = re.sub(r"[^a-z]", "", name[match.end():].removesuffix(".pdf").casefold())
+                if not topic or topic in stem:
+                    candidates.append(name)
+        if len(candidates) == 1:
+            return DocumentScope((candidates[0],))
+        if candidates:
+            return DocumentScope(clarification="多个章节文件符合问题，请指定 PDF 文件名：" + "、".join(candidates))
+        return DocumentScope(clarification=(
+            f"没有找到已索引的 Chapter {number}"
+            + (f" {tail.group(1).strip()}" if tail else "")
+            + "。请确认上传并建立索引，或指定正确的 PDF 文件名。"
+        ))
     numbers = lecture_numbers(query)
     numbers.update(int(match.group(2)) for match in _COURSE_NUMBER.finditer(query))
     if not numbers:
