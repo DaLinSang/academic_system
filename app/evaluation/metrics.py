@@ -82,6 +82,17 @@ def _web_search_requested(row: dict[str, Any]) -> bool:
     return False
 
 
+def _web_search_credits(row: dict[str, Any]) -> int:
+    """Return external search credits recorded by completed Web-search steps."""
+    credits = 0
+    for event in row.get("trace", []):
+        if event.get("stage") != "web_search" or event.get("event") != "end":
+            continue
+        detail = event.get("detail", {})
+        credits += int(detail.get("search_credits", 0) or 0)
+    return credits
+
+
 def _valid_http_url(value: Any) -> bool:
     if not isinstance(value, str):
         return False
@@ -124,7 +135,7 @@ def calculate_metrics(
     cross_session = []
     supported = claim_total = unverified_claims = 0
     used_total = invalid_total = cited_gold_total = gold_source_total = 0
-    tokens = cost = latency = error_rows = recovered = 0
+    tokens = cost = latency = search_credits = error_rows = recovered = 0
     web_correct = web_unnecessary = web_negative = 0
     web_citations = valid_web_citations = 0
 
@@ -236,6 +247,7 @@ def calculate_metrics(
         tokens += int(usage.get("total_tokens", 0) or 0)
         cost += float(usage.get("cost_usd", 0) or 0)
         latency += _pipeline_wall_latency_ms(row)
+        search_credits += _web_search_credits(row)
         if row.get("errors"):
             error_rows += 1
             recovered += bool(str(row.get("final_answer", "")).strip())
@@ -299,9 +311,14 @@ def calculate_metrics(
         "rq4": {
             "tokens_per_query": _ratio(tokens, n),
             "cost_usd_per_query": _ratio(cost, n),
+            "search_credits_per_query": _ratio(search_credits, n),
             "latency_ms_per_query": _ratio(latency, n),
             "error_recovery_rate": _ratio(recovered, error_rows),
-            "counts": {"error_queries": error_rows, "recovered_queries": recovered},
+            "counts": {
+                "search_credits": search_credits,
+                "error_queries": error_rows,
+                "recovered_queries": recovered,
+            },
         },
     }
 

@@ -4,7 +4,7 @@
 
 当前开发分支：`docs/c-progress-pr100-merged`
 
-基线提交：`origin/main@2f6dae2`（已包含 PR #88、#92、#93、#94、#100）
+基线提交：`origin/main@62a0203`（已包含 PR #95、#96、#98、#100、#102）
 
 ## 2026-11-22 冻结状态
 
@@ -27,13 +27,12 @@
 - PR #92 已合并：网页结果相关性过滤进入 main；Evidence、URL、title、
   diagnostics 与 Claim Verification 接口兼容
 - PR #93 已合并：Chapter 来源限制进入 main；C 的来源、引用和校验展示接口无需修改
-- PR #95（A，LLM 搜索 query 改写）、PR #96（A，Tavily 后端）、PR #98
-  （A，矛盾长期记忆更新）均已完成 C interface review；当前分支与最新 main
-  存在冲突，已请作者更新并重跑后再合并
 - PR #100 已合并：UI 已兼容显示网页候选全部无关、搜索后端失败、长期记忆新增、
   矛盾更新和更新失败；Issue #89、#97 的 C 展示部分均已完成
-- PR #95、#96、#98 仍由 A 负责修复冲突或 Changes Requested 项；C 已完成接口
-  review，不接管 A 的 query 改写、Tavily 回退或 LLM usage 统计实现
+- PR #95、#96、#98、#102 已于 2026-11-23 合并：搜索 query 改写、Tavily
+  失败回退、矛盾记忆 usage 归集及 Planner Chapter 约束均已进入 main
+- C 跟进 Tavily 新增统计口径：RQ4 单列每查询 search credits 和总 credits，
+  不与 LLM token/cost 混算，供正式 12-run 汇总比较
 
 ## 任务边界
 
@@ -240,17 +239,14 @@ A 的英文 Router 与 `need_memory` 修复已通过 PR #27 合入 `main`。后�
 | RQ1 路由 | accuracy、不必要检索率、漏检率、3×3 混淆矩阵 | `route` + `gold_route` |
 | RQ2 记忆 | 记忆命中率、写入拒绝率、跨会话完成度 | `memory_context` + memory trace |
 | RQ3 验证 | claim 支持率、引用精确率、引用召回率 | `claims`、citation audit、`gold_pages` |
-| RQ4 效率 | 单查询 token、成本、延迟、错误恢复成功率 | `usage`、`errors`、`final_answer` |
+| RQ4 效率 | 单查询 token、成本、搜索 credits、延迟、错误恢复成功率 | `usage`、Web trace、`errors`、`final_answer` |
 
 ## 下一步执行顺序
 
-1. 等 #95、#96、#98 更新最新 main 后复查冲突解决结果、usage 统计和全量测试。
-2. 等 A/B 完成 #89、#90、#97、#99 的剩余编排、检索和 Chapter 约束。
-3. 上述功能全部合并后重新确定最终冻结提交。
-4. A 在最终冻结提交上运行 50 条 × B1-B4 × 3 次正式实验。
-5. C 检查 12 个 run 的 `meta.json`、汇总指标和失败案例，再冻结报告表格。
+1. 用最新 main 复查 #89、#90 的真实联网与 Chapter 来源验收，并关闭已完成 Issue。
+2. 团队确认最终冻结提交及演示机器的 Tavily、模型、PostgreSQL/Ollama 环境。
+3. A 在最终冻结提交上运行 50 条 × B1-B4 × 3 次正式实验。
+4. C 检查 12 个 run 的 `meta.json`、汇总指标和失败案例，再冻结报告表格。
 
-当前 C 功能代码和 Issue #89、#97 的展示部分均已进入 main，没有待合并的 C 功能
-PR。正式实验基础设施已具备，但 #95、#96、#98 及 #89、#90、#97、#99 的剩余
-A/B 修改会改变联网、检索、记忆和 RQ4 统计结果，应在这些修改全部合并后再运行
-最终 50×4×3 实验。
+当前联网、检索、记忆与 Chapter 约束相关 PR 均已进入 main。C 新增的 search credits
+RQ4 统计合并后，可在团队确认最终冻结提交和真实运行环境后开始 50×4×3 实验。

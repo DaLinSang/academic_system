@@ -84,7 +84,8 @@ The report contains:
   per-sample cross-session fields.
 - RQ3 supported-claim rate, citation precision/file-page recall, and Web citation
   validity (a used HTTP(S) citation must map to retrieved evidence supporting a claim).
-- RQ4 tokens, cost, latency per query, and error recovery rate.
+- RQ4 LLM tokens/cost, external Web-search credits, latency per query, and
+  error recovery rate. Search credits remain separate from LLM token cost.
 
 RQ4 latency uses pipeline start/end timestamps as the single wall-clock source.
 Component retry latency is kept in trace detail and is not added a second time.

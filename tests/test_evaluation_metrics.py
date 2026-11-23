@@ -105,6 +105,11 @@ def test_calculate_metrics_covers_rq1_to_rq4(tmp_path) -> None:
             citations=[{"index": 1, **source}],
             trace=[
                 {
+                    "stage": "web_search",
+                    "event": "end",
+                    "detail": {"backend": "tavily", "search_credits": 1},
+                },
+                {
                     "stage": "generate",
                     "event": "citation_audit",
                     "detail": {"used": [1, 2], "invalid": [2]},
@@ -134,6 +139,8 @@ def test_calculate_metrics_covers_rq1_to_rq4(tmp_path) -> None:
     assert metrics["rq3"]["web_citation_valid_rate"] is None
     assert metrics["rq4"]["tokens_per_query"] == 20
     assert metrics["rq4"]["cost_usd_per_query"] == 0.2
+    assert metrics["rq4"]["search_credits_per_query"] == 0.5
+    assert metrics["rq4"]["counts"]["search_credits"] == 1
     assert metrics["rq4"]["latency_ms_per_query"] == 200
     assert metrics["rq4"]["error_recovery_rate"] == 1
 
@@ -155,6 +162,7 @@ def test_zero_denominators_are_null(tmp_path) -> None:
     assert metrics["rq3"]["citation_precision"] is None
     assert metrics["rq3"]["citation_recall"] is None
     assert metrics["rq4"]["error_recovery_rate"] is None
+    assert metrics["rq4"]["search_credits_per_query"] == 0
 
 
 def test_web_and_cross_turn_metrics_use_trace_and_supported_citations(tmp_path) -> None:
