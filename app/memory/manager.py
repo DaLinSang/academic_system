@@ -292,6 +292,65 @@ def _format_existing(memories: list[MemoryItem] | None, limit: int = 10) -> str:
     return "\n".join(lines)
 
 
+# Issue #97：矛盾判定的系统提示词。只输出 yes/no，避免解析复杂结构。
+_CONTRADICTION_SYSTEM_PROMPT = """判断两条长期记忆是否表达了互相矛盾的用户偏好。
+
+只回答 yes 或 no，不要解释。
+- yes：两条对同一件事给出相反的稳定偏好（如"每次都附带 RAG" vs "不再附带 RAG"、
+  "偏好中文" vs "偏好英文"）。后一条通常是用户对前一条的更新/反悔。
+- no：两条只是不同主题、互相补充、或程度不同但不冲突
+  （如"喜欢 RAG"和"在做 RAG 项目"、"偏好简短"和"偏好中文"）。
+保守判断：不确定就回答 no，绝不把不矛盾的记忆误判为矛盾。"""
+
+
+def _find_contradiction(
+    llm: LLM,
+    candidate: str,
+    tier: MemoryTier,
+    existing: list[MemoryItem],
+    temperature: float = 0.0,
+    usage_sink: list[Usage] | None = None,
+) -> MemoryItem | None:
+    """返回与新候选矛盾的同 tier 旧记忆；无矛盾或判定失败返回 None。
+
+    保守设计（Issue #97）：
+    - 只比对同 tier，跨 tier 不判矛盾
+    - 一次 LLM 调用批量给出判定，失败/解析异常一律返回 None（不误删旧记忆）
+    - 提示词要求"不确定答 no"，宁可漏更新也不错更新
+    """
+    same_tier = [m for m in existing if m.tier == tier and m.memory_id]
+    if not same_tier:
+        return None
+    lines = "\n".join(f"{i}. {m.content}" for i, m in enumerate(same_tier, start=1))
+    prompt = (
+        f"新偏好：{candidate}\n\n已有同类型记忆：\n{lines}\n\n"
+        f"逐条回答新偏好是否与每条已有记忆矛盾。格式：\n"
+        f"1. yes/no\n2. yes/no\n（只输出编号和 yes/no）"
+    )
+    try:
+        response = llm.generate(
+            [
+                {"role": "system", "content": _CONTRADICTION_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=temperature,
+            max_tokens=64,
+        )
+    except Exception:  # noqa: BLE001 - 判定失败就当不矛盾，绝不误删
+        return None
+    # Issue #97 review：这次判定调用也要计入 RQ4，不能丢弃 usage
+    if usage_sink is not None:
+        usage_sink.append(response.usage)
+    # 逐行找 "N. yes"，只认第一个明确的 yes（保守：一条候选最多替换一条旧记忆）
+    for line in (response.text or "").splitlines():
+        match = re.match(r"\s*(\d+)\s*[.、:：]?\s*(yes|no)\b", line, re.I)
+        if match and match.group(2).casefold() == "yes":
+            index = int(match.group(1)) - 1
+            if 0 <= index < len(same_tier):
+                return same_tier[index]
+    return None
+
+
 # --------------------------------------------------------------------------- #
 # 记忆管理器
 # --------------------------------------------------------------------------- #
@@ -316,6 +375,9 @@ class LLMMemoryManager:
         # 与 Router / Planner 同一约定：组件自己调模型，就把用量挂在 last_usage 上
         self.last_usage = Usage()
         self.last_stats: dict[str, Any] = {}
+        # Issue #97：矛盾记忆更新计划 [(memory_id, new_content, importance), ...]
+        # 只记录"要更新哪条"，不直接改库——写入仍由 Orchestrator 调 MemoryStore 完成。
+        self.last_updates: list[tuple[str, str, float]] = []
 
     # ------------------------------------------------------------------ #
     def extract_candidates(
@@ -325,6 +387,7 @@ class LLMMemoryManager:
         existing_memories: list[MemoryItem] | None = None,
     ) -> list[MemoryCandidate]:
         self.last_usage = Usage()
+        self.last_updates = []
         self.last_stats = {
             "llm_called": False,
             "proposed": 0,
@@ -334,6 +397,8 @@ class LLMMemoryManager:
             "dropped_invalid": 0,
             "skipped": None,
             "parse_detail": None,
+            "contradictions_checked": 0,
+            "contradictions_updated": 0,
         }
 
         # 闸 1：没有强信号就不花这次模型调用
@@ -379,7 +444,35 @@ class LLMMemoryManager:
             return []
 
         self.last_stats["proposed"] = len(payload)
-        return self._filter(payload, existing_memories)
+        accepted = self._filter(payload, existing_memories)
+
+        # Issue #97：对通过的候选做矛盾检测。命中的转成"更新旧记忆"计划，
+        # 不返回给 add 路径（否则新旧两条都写进去，正是要修的问题）。
+        self.last_updates = []
+        self.last_stats["contradictions_checked"] = 0
+        self.last_stats["contradictions_updated"] = 0
+        if accepted and existing_memories:
+            to_add: list[MemoryCandidate] = []
+            verdict_usages: list[Usage] = []
+            for candidate in accepted:
+                old = _find_contradiction(
+                    self.llm, candidate.content, candidate.tier,
+                    existing_memories, self.temperature,
+                    usage_sink=verdict_usages,
+                )
+                self.last_stats["contradictions_checked"] += 1
+                if old is not None:
+                    # 用新候选覆盖旧记忆：保留旧 tier，用新 content/importance
+                    self.last_updates.append((old.memory_id, candidate.content, candidate.importance))
+                    self.last_stats["contradictions_updated"] += 1
+                else:
+                    to_add.append(candidate)
+            # Issue #97 review：把每次矛盾判定的 token/call 累加进 last_usage，
+            # 否则 Orchestrator 只吸收抽取那一次，RQ4 系统性低估。
+            for usage in verdict_usages:
+                self.last_usage = self.last_usage.add(usage)
+            return to_add
+        return accepted
 
     # ------------------------------------------------------------------ #
     # 闸 3：后处理

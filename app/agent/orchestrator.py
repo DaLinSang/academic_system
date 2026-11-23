@@ -661,13 +661,31 @@ class Orchestrator:
                 for c in candidates:
                     self.memory_store.add(c, user_id=state.user_id)
 
+                # Issue #97：矛盾偏好用 update 覆盖旧记忆，而不是新增一条
+                # （新旧相反的偏好同时入库会让模型读到打架的记忆）。
+                # last_updates 是可选属性，Mock/其他 MemoryManager 没有就跳过。
+                updates = getattr(self.memory_manager, "last_updates", None) or []
+                updated_count = 0
+                for memory_id, content, importance in updates:
+                    try:
+                        result = self.memory_store.update(
+                            memory_id, content=content, importance=importance,
+                            user_id=state.user_id,
+                        )
+                        if result is not None:
+                            updated_count += 1
+                    except Exception as exc:  # noqa: BLE001 - 单条更新失败不影响其他
+                        state.log("memory_write", "update_error", error=type(exc).__name__)
+
                 # 记忆漏斗：模型提议几条、被敏感/重复/非法各拦掉几条。
                 # RQ2 分析"记忆写入拒绝率"直接用这个，比只报最终条数有说服力。
                 stats = getattr(self.memory_manager, "last_stats", None)
                 if isinstance(stats, dict) and stats:
                     state.log("memory_write", "stats", **stats)
 
-                state.log("memory_write", "end", stored=len(candidates))
+                if updated_count:
+                    state.log("memory_write", "contradiction_update", updated=updated_count)
+                state.log("memory_write", "end", stored=len(candidates), updated=updated_count)
             except Exception as exc:  # noqa: BLE001
                 state.errors.append(f"memory_write: {type(exc).__name__}: {exc}")
                 state.log("memory_write", "error", error=str(exc))
@@ -766,7 +784,11 @@ class Orchestrator:
             (e for e in state.trace if e.stage == "memory_write" and e.event == "end"),
             None,
         )
-        if end is None or int(end.detail.get("stored", 0) or 0) > 0:
+        # Issue #97：stored=0 但 updated>0 也算成功（矛盾偏好走更新而非新增）
+        if end is None or (
+            int(end.detail.get("stored", 0) or 0) > 0
+            or int(end.detail.get("updated", 0) or 0) > 0
+        ):
             return ""
         stats = next(
             (e for e in state.trace if e.stage == "memory_write" and e.event == "stats"),
