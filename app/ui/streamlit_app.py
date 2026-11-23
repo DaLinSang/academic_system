@@ -108,10 +108,31 @@ h1, h2, h3 { letter-spacing: -0.025em; }
   padding: .65rem .2rem 1rem;
   margin-bottom: .35rem;
 }
-[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] p {
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] {
+  font-size: .96rem;
+  line-height: 1.68;
+}
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] p,
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] li,
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] td,
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] th {
   line-height: 1.68;
   font-size: .96rem;
   max-width: 78ch;
+}
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] h1,
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] h2,
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] h3,
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] h4,
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] h5,
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] h6 {
+  font-size: 1.04rem;
+  line-height: 1.45;
+  font-weight: 650;
+  margin: 1rem 0 .35rem;
+}
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] code {
+  font-size: .9rem;
 }
 [data-testid="stChatMessageAvatarUser"],
 [data-testid="stChatMessageAvatarAssistant"] {

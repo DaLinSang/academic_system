@@ -23,3 +23,11 @@ def test_chat_layout_exposes_session_list_right_rail_and_input() -> None:
     assert len(app.chat_input) == 1
     assert len(app.get("file_uploader")) == 1
     assert not any(selectbox.label == "当前会话" for selectbox in app.selectbox)
+
+
+def test_chat_markdown_uses_consistent_typography() -> None:
+    source = APP_PATH.read_text(encoding="utf-8")
+
+    assert '[data-testid="stMarkdownContainer"] li' in source
+    assert '[data-testid="stMarkdownContainer"] h1' in source
+    assert "font-size: 1.04rem" in source
