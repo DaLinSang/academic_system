@@ -107,6 +107,7 @@ class Orchestrator:
         web_search_tool: object | None = None,
         web_search_policy: object | None = None,
         enable_web_search: bool = True,
+        web_query_rewriter: object | None = None,
     ) -> None:
         self.router = router
         self.planner = planner
@@ -126,6 +127,9 @@ class Orchestrator:
         self.web_search_tool = web_search_tool
         self.web_search_policy = web_search_policy or WebSearchPolicy()
         self.enable_web_search = enable_web_search
+        # Issue #89：可选的查询改写器。没注入时搜索 query 仍用决策模块的原文，
+        # 与既有行为完全一致；真实装配时传入 LLM 改写器。
+        self.web_query_rewriter = web_query_rewriter
 
     # ------------------------------------------------------------------ #
     # 主入口
@@ -326,8 +330,25 @@ class Orchestrator:
         with self._stage(state, "web_search") as ok:
             if not ok:
                 return
+            # Issue #89：把用户口语问句改写成搜索引擎友好的查询串。
+            # 实测用户原话"你上网帮我搜一下计算机科学专业怎么样"会被 Bing
+            # 取首词"你"→返回"你（汉语文字）"；改写后能命中正确主题。
+            search_query = decision.query
+            if self.web_query_rewriter is not None:
+                try:
+                    rewritten = self.web_query_rewriter.rewrite(decision.query)
+                    if rewritten and rewritten.strip():
+                        search_query = rewritten.strip()
+                    self._absorb_usage(state, self.web_query_rewriter)
+                    state.log(
+                        "web_search", "query_rewrite",
+                        original=decision.query, query=search_query,
+                        changed=search_query != decision.query,
+                    )
+                except Exception as exc:  # noqa: BLE001 - 改写失败用原 query 继续
+                    state.log("web_search", "query_rewrite_error", error=type(exc).__name__)
             try:
-                found = self.web_search_tool.search(decision.query, top_k=self.top_k)
+                found = self.web_search_tool.search(search_query, top_k=self.top_k)
             except Exception as exc:  # noqa: BLE001 - 工具边界统一兜底
                 state.errors.append(f"web_search: {type(exc).__name__}: {exc}")
                 state.log("web_search", "error", error=str(exc))
