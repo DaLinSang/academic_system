@@ -121,6 +121,7 @@ def build_stage1_orchestrator(
     """
     from app.agent.answer_generator import LLMAnswerGenerator
     from app.agent.web_query_rewriter import WebQueryRewriter
+    from app.core.config import settings
     from app.llm.client import get_llm
     from app.memory import LLMMemoryManager, PostgresMemoryStore, RuleBasedMemoryManager
     from app.planning.planner import LLMPlanner
@@ -130,6 +131,17 @@ def build_stage1_orchestrator(
     from app.verification import LexicalVerifier, SemanticVerifier
 
     llm = get_llm()
+
+    def build_web_tool():
+        """Issue #89/#96：有 Tavily key 走 API，失败/空结果自动回退 HTML 爬取。"""
+        if not enable_web_search:
+            return None
+        if settings.search.tavily_api_key:
+            from app.agent.web_search_fallback import FallbackSearchTool
+            from app.retrieval.tavily_search import TavilySearchTool
+            # B review：key 配了但 API 失败/空结果时不能直接返回空，要降级到 HTML
+            return FallbackSearchTool(TavilySearchTool(), WebSearchTool())
+        return WebSearchTool()
 
     if memory_strategy == "rule":
         memory_manager = RuleBasedMemoryManager()
@@ -148,7 +160,7 @@ def build_stage1_orchestrator(
         answer_generator=LLMAnswerGenerator(llm),
         llm=llm,
         top_k=top_k,
-        web_search_tool=WebSearchTool() if enable_web_search else None,
+        web_search_tool=build_web_tool(),
         enable_web_search=enable_web_search,
         # Issue #89：真实链路用 LLM 把口语问句改写成搜索关键词
         web_query_rewriter=WebQueryRewriter(llm) if enable_web_search else None,

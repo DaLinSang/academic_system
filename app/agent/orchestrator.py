@@ -357,6 +357,11 @@ class Orchestrator:
             state.add_evidence(found)
             warning = getattr(self.web_search_tool, "last_warning", None)
             diagnostics = getattr(self.web_search_tool, "last_diagnostics", None)
+            # Issue #96 review：搜索 credits/后端单列统计，不混进 LLM token cost
+            search_backend = getattr(self.web_search_tool, "last_backend", None)
+            search_credits = int(
+                getattr(self.web_search_tool, "last_search_credits", 0) or 0
+            )
             state.log(
                 "web_search",
                 "end",
@@ -365,6 +370,8 @@ class Orchestrator:
                 warning=warning,
                 # Issue #71：结构化诊断（后端/类别/HTTP 状态），供报告与 UI 定位
                 diagnostics=list(diagnostics) if isinstance(diagnostics, list) else [],
+                backend=search_backend,
+                search_credits=search_credits,
             )
 
     @staticmethod
