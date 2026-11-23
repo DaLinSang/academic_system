@@ -21,7 +21,7 @@ Issue #49 明确要求：契约、Web 搜索、多轮、规划闭环、重试全
 
 from __future__ import annotations
 
-import json
+import argparse
 import subprocess
 import sys
 from pathlib import Path
@@ -29,6 +29,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import settings  # noqa: E402
+from app.core.mocks import MockLLM  # noqa: E402
+from app.evaluation.dataset import DEFAULT_DATASET, load_dataset  # noqa: E402
 
 OK = "  [OK]  "
 BAD = "  [FAIL]"
@@ -39,7 +41,7 @@ def check_llm() -> bool:
     from app.llm.client import get_llm
 
     llm = get_llm()
-    if type(llm).__name__ == "MockLLM":
+    if isinstance(llm, MockLLM):
         print(f"{BAD} 未配置 LLM key（当前 MockLLM），正式实验必须用 Real 模型")
         return False
     print(f"{OK} LLM 就绪：provider={settings.llm.provider}")
@@ -86,7 +88,7 @@ def check_indexed_pdfs() -> bool:
         with psycopg.connect(settings.db.dsn, connect_timeout=3) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT DISTINCT file_name FROM document_chunks")
-                indexed = {row[0] for row in cur.fetchall()}
+                indexed = {Path(row[0]).name.casefold() for row in cur.fetchall() if row[0]}
     except Exception as exc:  # noqa: BLE001
         print(f"{BAD} 查索引失败：{type(exc).__name__}")
         return False
@@ -94,15 +96,12 @@ def check_indexed_pdfs() -> bool:
         print(f"{BAD} 数据库无已索引 PDF，请先运行 scripts/index_pdfs.py")
         return False
 
-    dataset = Path(__file__).resolve().parents[1] / "app/evaluation/datasets/annotated_v1.jsonl"
     referenced: set[str] = set()
-    for line in dataset.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        for source in json.loads(line).get("gold_sources", []) or []:
+    for sample in load_dataset():
+        for source in sample.get("gold_sources", []) or []:
             name = source.get("file_name") if isinstance(source, dict) else str(source)
             if name:
-                referenced.add(name)
+                referenced.add(Path(name).name.casefold())
     missing = sorted(name for name in referenced if name not in indexed)
     if missing:
         print(f"{BAD} 数据集引用但未索引的 PDF：{missing}")
@@ -113,30 +112,29 @@ def check_indexed_pdfs() -> bool:
 
 
 def check_dataset() -> bool:
-    path = Path(__file__).resolve().parents[1] / "app/evaluation/datasets/annotated_v1.jsonl"
-    if not path.exists():
-        print(f"{BAD} 标注集不存在：{path}")
+    if not DEFAULT_DATASET.exists():
+        print(f"{BAD} 标注集不存在：{DEFAULT_DATASET}")
         return False
-    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    try:
+        rows = load_dataset()
+    except (OSError, ValueError) as exc:
+        print(f"{BAD} 标注集校验失败：{exc}")
+        return False
     if not 50 <= len(rows) <= 80:
         print(f"{BAD} 标注集条数 {len(rows)} 不在 50–80 范围")
         return False
-    required = {"id", "question", "gold_route", "gold_sources"}
-    missing = [r.get("id") for r in rows if not required.issubset(r)]
-    if missing:
-        print(f"{BAD} {len(missing)} 条样本缺必填字段，例如 {missing[:3]}")
-        return False
-    print(f"{OK} 标注集就绪：{len(rows)} 条，字段完整")
+    print(f"{OK} 标注集就绪：{len(rows)} 条，已通过正式 loader 全量校验")
     return True
 
 
-def check_freeze() -> bool:
+def check_freeze(*, required: bool = False) -> bool:
     root = Path(__file__).resolve().parents[1]
     marker = root / ".experiment-freeze"
     if not marker.exists():
-        print(f"{BAD} 无功能冻结标记 .experiment-freeze")
-        print("       Issue #49 要求全部功能冻结后才跑，否则数据作废")
-        return False
+        status = BAD if required else WARN
+        print(f"{status} 无功能冻结标记 .experiment-freeze")
+        print("       前置环境可以继续检查；正式运行前请创建冻结标记并加 --require-freeze")
+        return not required
     frozen = marker.read_text(encoding="utf-8").strip()
     head = subprocess.check_output(
         ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
@@ -149,7 +147,18 @@ def check_freeze() -> bool:
     return True
 
 
-def main() -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="检查正式实验环境与功能冻结状态")
+    parser.add_argument(
+        "--require-freeze",
+        action="store_true",
+        help="正式运行前启用：要求 .experiment-freeze 与当前 HEAD 一致",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     print("=" * 64)
     print("正式实验就绪检查（Issue #49）")
     print("=" * 64)
@@ -159,7 +168,7 @@ def main() -> int:
         ("Ollama embedding", check_embedding),
         ("已索引 PDF", check_indexed_pdfs),
         ("标注集", check_dataset),
-        ("功能冻结标记", check_freeze),
+        ("功能冻结标记", lambda: check_freeze(required=args.require_freeze)),
     ]
     results: list[bool] = []
     for name, fn in checks:
@@ -172,6 +181,10 @@ def main() -> int:
 
     print("\n" + "=" * 64)
     if all(results):
+        if not args.require_freeze:
+            print("前置环境就绪。冻结代码后，请执行最终检查：")
+            print("  uv run python scripts/check_experiment_ready.py --require-freeze")
+            return 0
         print("全部就绪。可以运行正式实验：")
         print("  uv run python -m app.evaluation.batch_runner --real --repeats 3")
         print("  （约 50×4×3=600 次，本机 2 条冒烟实测推算约 30 分钟）")
