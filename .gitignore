@@ -64,3 +64,6 @@ draft_*/
 
 # pytest 临时目录（沙箱环境下指定 basetemp 用）
 .pytest_tmp/
+
+# 正式实验冻结标记（本地状态，不进版本库）
+.experiment-freeze
