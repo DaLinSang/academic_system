@@ -15,6 +15,8 @@
 
 ### Added
 
+- 测试 `tests/test_chapter_constraint_99.py`（7 项）：Chapter 变体/多章节/去重/无指代不误伤、B 端正则兼容（Issue #99）
+- 测试 `tests/test_chapter_constraint_99.py`（7 项）：Chapter 变体/多章节/去重/无指代不误伤、B 端正则兼容（Issue #99）
 - `app/agent/web_search_fallback.py`：搜索后端降级包装（Tavily 失败/空结果自动回退 HTML）（Issue #96）
 - 测试 `tests/test_tavily_search.py`（4 项 review 新增）：credits 统计、主/备后端切换、全失败（Issue #96）
 - 测试 `tests/test_memory_contradiction_97.py`（10 项）：矛盾更新、非矛盾并存、跨 tier、判定失败不误删、usage 累计与 note 不误报（Issue #97）
@@ -103,6 +105,8 @@
 
 ### Changed
 
+- `app/agent/orchestrator.py::_enrich_query`：Planner 子查询补回 Chapter 章节约束（Issue #99，#64 同做法）
+- `app/agent/orchestrator.py::_enrich_query`：Planner 子查询补回 Chapter 章节约束（Issue #99，#64 同做法）
 - `app/agent/factory.py`：Tavily 配 key 但失败/空结果时自动回退 WebSearchTool；web trace 单列 search_backend/search_credits，不混同 LLM token cost（Issue #96）
 - `app/memory/manager.py` / `app/agent/orchestrator.py`：写入前用 LLM 判矛盾偏好，命中则更新旧记忆而非新增；矛盾判定 usage 计入 RQ4；trace 记 contradiction_update（Issue #97）
 - `app/agent/orchestrator.py` / `app/agent/factory.py`：联网前用 LLM 改写搜索 query，trace 记 query_rewrite（Issue #89）
