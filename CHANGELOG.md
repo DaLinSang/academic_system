@@ -15,6 +15,7 @@
 
 ### Added
 
+- `scripts/check_experiment_ready.py`：正式实验就绪检查（LLM/DB/embedding/数据集引用PDF/冻结标记）（Issue #49）
 - 测试 `tests/test_chapter_constraint_99.py`（7 项）：Chapter 变体/多章节/去重/无指代不误伤、B 端正则兼容（Issue #99）
 - 测试 `tests/test_chapter_constraint_99.py`（7 项）：Chapter 变体/多章节/去重/无指代不误伤、B 端正则兼容（Issue #99）
 - `app/agent/web_search_fallback.py`：搜索后端降级包装（Tavily 失败/空结果自动回退 HTML）（Issue #96）

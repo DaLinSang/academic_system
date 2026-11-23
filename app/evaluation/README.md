@@ -102,3 +102,46 @@ PDFs are not confused.
 ```bash
 uv run pytest tests/test_evaluation_metrics.py -q
 ```
+
+## Running the formal experiment (50 x B1-B4 x 3)
+
+Issue #49 requires all functionality to be frozen before the formal run —
+otherwise the 12 runs become invalid. Follow this order:
+
+1. Verify the environment (LLM key, PostgreSQL, Ollama, indexed PDFs, dataset):
+
+   ```bash
+   uv run python scripts/check_experiment_ready.py
+   ```
+
+   The check also verifies that every PDF referenced by `gold_sources` is
+   indexed. If any is missing, run `uv run python scripts/index_pdfs.py` first.
+
+   A missing freeze marker is only a warning in this pre-freeze check.
+
+2. Freeze the current commit (only after confirming no more feature changes):
+
+   ```bash
+   git rev-parse HEAD > .experiment-freeze
+   ```
+
+   The marker is gitignored — it records a local freeze decision, not source.
+
+3. Run the final check, which now requires the marker to match `HEAD`:
+
+   ```bash
+   uv run python scripts/check_experiment_ready.py --require-freeze
+   ```
+
+4. Run all 4 modes x 3 repeats (about 30 minutes on a Mac with DeepSeek):
+
+   ```bash
+   uv run python -m app.evaluation.batch_runner --real --repeats 3
+   ```
+
+   This writes 12 run directories plus `experiment_summary.json` (mean / sample
+   std / n per mode). Search credits are reported separately from LLM cost.
+
+5. If any code changes after the run, the marker no longer matches HEAD and
+   `check_experiment_ready.py` will fail — re-run the experiment after freezing
+   a new commit.

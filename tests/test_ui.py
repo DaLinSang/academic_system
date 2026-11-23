@@ -413,7 +413,7 @@ def test_session_navigation_items_preserve_order_summary_and_selection() -> None
                 "last_question": "Summarise the RAG paper",
             },
             {
-                "session_id": "empty",
+                "session_id": "renamed-topic",
                 "turn_count": 0,
                 "last_at": "2026-11-21T10:00:00+00:00",
                 "last_question": "",
@@ -422,11 +422,17 @@ def test_session_navigation_items_preserve_order_summary_and_selection() -> None
         "recent",
     )
 
-    assert [row["session_id"] for row in rows] == ["recent", "empty"]
+    assert [row["session_id"] for row in rows] == ["recent", "renamed-topic"]
     assert rows[0]["selected"] is True
     assert rows[0]["summary"] == "Summarise the RAG paper"
     assert rows[0]["timestamp"] == "2026-11-22 08:30"
-    assert rows[1]["summary"] == "新会话"
+    assert rows[1]["summary"] == "renamed-topic"
+
+    generated = session_navigation_items(
+        [{"session_id": "chat-ab12cd34", "last_question": ""}],
+        "chat-ab12cd34",
+    )
+    assert generated[0]["summary"] == "新会话"
 
 
 def test_answer_panel_summary_counts_visible_attention_states() -> None:
