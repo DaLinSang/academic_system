@@ -101,6 +101,11 @@
 ### Changed
 
 - `app/agent/orchestrator.py` / `app/agent/factory.py`：联网前用 LLM 改写搜索 query，trace 记 query_rewrite（Issue #89）
+- app/ui/presenters.py：区分网页候选全部无关与搜索后端失败，并显示长期记忆新增/矛盾更新/更新失败状态（Issue #89 / #97）
+- app/ui/streamlit_app.py：聊天界面收尾为左侧会话列表、中间聊天、右侧设置/文档/记忆三栏；窄屏自动堆叠（Issue #91）
+- 回答的来源引用、Claim Verification、运行信息默认折叠并显示数量；校验失败和运行异常仍在正文下方提示（Issue #91）
+- 上传 PDF 入口移动到聊天输入附近并复用原索引流程；统一浅色背景、边框、焦点态及深色主题下的可读对比度（Issue #91）
+- app/ui/presenters.py：新增会话导航摘要、回答面板计数及网页搜索进行中状态（Issue #91）
 - `app/verification/verifier.py`：排除指令确认、行为承诺、搜索运行状态和纯页码来源说明，避免非事实元话语被误标 unsupported（Issue #80）
 - `app/ui/streamlit_app.py`：检索 Top-K 默认值由 3 调整为 5，并说明综述/多文档比较会自动扩展到至少 6 条证据（Issue #81）
 - `app/agent/answer_generator.py`：web 已执行 count>0 时纠正“我无法联网”类错误表述，改为“已返回 N 条但无关”（Issue #83）

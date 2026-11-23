@@ -1,6 +1,7 @@
 """Streamlit presentation helpers owned by Member C."""
 
 from app.ui.presenters import (
+    answer_panel_summary,
     claim_presentations,
     document_status_presentation,
     inspect_pdf_text,
@@ -8,6 +9,7 @@ from app.ui.presenters import (
     pdf_page_count,
     pipeline_stage_presentations,
     safe_pdf_name,
+    session_navigation_items,
     source_status,
     upload_error_message,
     used_citations,
@@ -16,6 +18,7 @@ from app.ui.presenters import (
 )
 
 __all__ = [
+    "answer_panel_summary",
     "claim_presentations",
     "document_status_presentation",
     "inspect_pdf_text",
@@ -23,6 +26,7 @@ __all__ = [
     "pdf_page_count",
     "pipeline_stage_presentations",
     "safe_pdf_name",
+    "session_navigation_items",
     "source_status",
     "upload_error_message",
     "used_citations",
