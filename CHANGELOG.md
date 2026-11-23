@@ -17,6 +17,8 @@
 
 - `app/agent/web_search_fallback.py`：搜索后端降级包装（Tavily 失败/空结果自动回退 HTML）（Issue #96）
 - 测试 `tests/test_tavily_search.py`（4 项 review 新增）：credits 统计、主/备后端切换、全失败（Issue #96）
+- `app/agent/web_query_rewriter.py`：LLM 搜索查询改写器，把口语问句精简为核心实体词（Issue #89）
+- 测试 `tests/test_web_query_rewriter.py`（8 项）：改写、清洗、降级、Orchestrator 接线与向后兼容（Issue #89）
 - 测试 `tests/test_web_zero_result_71.py`（6 项）：零结果阻断、不误伤普通问答、结构化诊断不泄漏查询词（Issue #71）
 - 测试 `tests/test_memory_json_contract_70.py`（13 项）：对象/数组兼容、可诊断解析失败、敏感过滤、已记录纠错（Issue #70）
 - 测试 `tests/test_planned_source_64.py`（5 项）：Planner 子查询继承 PDF 来源、指代只用用户问题、trace 记录来源约束（Issue #64）
@@ -101,6 +103,7 @@
 ### Changed
 
 - `app/agent/factory.py`：Tavily 配 key 但失败/空结果时自动回退 WebSearchTool；web trace 单列 search_backend/search_credits，不混同 LLM token cost（Issue #96）
+- `app/agent/orchestrator.py` / `app/agent/factory.py`：联网前用 LLM 改写搜索 query，trace 记 query_rewrite（Issue #89）
 - app/ui/presenters.py：区分网页候选全部无关与搜索后端失败，并显示长期记忆新增/矛盾更新/更新失败状态（Issue #89 / #97）
 - app/ui/streamlit_app.py：聊天界面收尾为左侧会话列表、中间聊天、右侧设置/文档/记忆三栏；窄屏自动堆叠（Issue #91）
 - 回答的来源引用、Claim Verification、运行信息默认折叠并显示数量；校验失败和运行异常仍在正文下方提示（Issue #91）

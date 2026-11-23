@@ -50,6 +50,7 @@ def build_orchestrator(
     web_search_tool: object | None = None,
     web_search_policy: object | None = None,
     enable_web_search: bool = True,
+    web_query_rewriter: object | None = None,
 ) -> Orchestrator:
     return Orchestrator(
         router=router,
@@ -66,6 +67,7 @@ def build_orchestrator(
         web_search_tool=web_search_tool,
         web_search_policy=web_search_policy,
         enable_web_search=enable_web_search,
+        web_query_rewriter=web_query_rewriter,
     )
 
 
@@ -118,6 +120,7 @@ def build_stage1_orchestrator(
     不应该因为 psycopg / httpx 之类的依赖而变得不可用。
     """
     from app.agent.answer_generator import LLMAnswerGenerator
+    from app.agent.web_query_rewriter import WebQueryRewriter
     from app.core.config import settings
     from app.llm.client import get_llm
     from app.memory import LLMMemoryManager, PostgresMemoryStore, RuleBasedMemoryManager
@@ -159,4 +162,6 @@ def build_stage1_orchestrator(
         top_k=top_k,
         web_search_tool=build_web_tool(),
         enable_web_search=enable_web_search,
+        # Issue #89：真实链路用 LLM 把口语问句改写成搜索关键词
+        web_query_rewriter=WebQueryRewriter(llm) if enable_web_search else None,
     )
