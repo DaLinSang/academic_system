@@ -111,9 +111,41 @@ class LLMAnswerGenerator:
         if clarifications:
             state.log("generate", "source_clarification", count=len(clarifications))
             return "\n".join(clarifications)
+        if state.document_text:
+            return self._generate_from_full_document(state)
         if not state.evidence:
             return self._generate_without_evidence(state)
         return self._generate_from_evidence(state)
+
+    def _generate_from_full_document(self, state: AgentState) -> str:
+        """Summarize one persisted document without Top-K truncation.
+
+        The retriever has already preserved page boundaries.  Keep a generous
+        safety cap so a very large OCR PDF cannot exhaust the model context;
+        larger documents continue through the existing multi-chunk path.
+        """
+        text = state.document_text
+        if len(text) > 50000:
+            state.log("document_read", "too_large", chars=len(text))
+            return self._generate_from_evidence(state)
+        prompt = (
+            "请只根据下面这份完整文档生成中文总结。请覆盖文档主题、背景/目标、"
+            "方法或结构、主要内容、结论和局限；不要声称文档中不存在的信息。"
+            "这是全文读取路径，不要编造页码或引用编号。\n\n"
+            f"文件：{state.document_file_name}\n全文：\n{text}\n\n"
+            f"用户问题：{state.question}"
+        )
+        try:
+            response = self.llm.generate(
+                [{"role": "system", "content": _SYSTEM_PROMPT},
+                 {"role": "user", "content": prompt}],
+                temperature=self.temperature,
+            )
+        except Exception as exc:  # noqa: BLE001
+            state.log("generate", "error", error=f"{type(exc).__name__}: {exc}")
+            return "文档全文已读取，但模型暂时无法生成总结。"
+        state.usage = state.usage.add(response.usage)
+        return response.text.strip() or "模型没有返回有效总结。"
 
     # ------------------------------------------------------------------ #
     # 路径 1：direct / 无证据

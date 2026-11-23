@@ -159,8 +159,30 @@ class HybridRetriever:
                 for chunk in chunks
             ]
 
+            page_rows = []
+            by_page: dict[int, list[str]] = {}
+            for chunk in chunks:
+                by_page.setdefault(chunk.page_number, []).append(chunk.text)
+            page_rows = [
+                (resolved_document_id, chunks[0].file_name, page, "\n".join(parts))
+                for page, parts in sorted(by_page.items())
+            ]
+
             with self._connect() as conn:
                 with conn.cursor() as cursor:
+                    cursor.execute(
+                        "DELETE FROM document_pages WHERE document_id = %s",
+                        (resolved_document_id,),
+                    )
+                    cursor.executemany(
+                        """INSERT INTO document_pages
+                           (document_id, file_name, page_number, text)
+                           VALUES (%s, %s, %s, %s)
+                           ON CONFLICT (document_id, page_number) DO UPDATE SET
+                             file_name=EXCLUDED.file_name, text=EXCLUDED.text,
+                             created_at=NOW()""",
+                        page_rows,
+                    )
                     cursor.execute(
                         "DELETE FROM document_chunks WHERE document_id = %s",
                         (resolved_document_id,),
@@ -192,6 +214,43 @@ class HybridRetriever:
         # Reload the full corpus on the next query to avoid hiding them.
         self._bm25_loaded = False
         return len(chunks)
+
+    def read_document(self, file_name: str) -> str:
+        """Return the persisted OCR/parsed text in page order.
+
+        This is intentionally separate from retrieval: a request to summarize
+        one selected PDF must not be limited by Top-K chunk ranking.
+        """
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """SELECT text FROM document_pages
+                       WHERE file_name = %s ORDER BY page_number""",
+                    (file_name,),
+                ).fetchall()
+        except Exception as exc:
+            raise RetrievalError(f"Failed to read document {file_name}: {exc}") from exc
+        if not rows:
+            raise RetrievalError(f"Document is not indexed: {file_name}")
+        return "\n\n".join(str(row[0]) for row in rows)
+
+    def delete_document(self, file_name: str) -> bool:
+        """Delete a PDF and its persisted page cache by visible file name."""
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT DISTINCT document_id FROM document_chunks WHERE file_name=%s",
+                    (file_name,),
+                ).fetchall()
+                if not rows:
+                    return False
+                conn.execute("DELETE FROM document_chunks WHERE file_name=%s", (file_name,))
+                conn.execute("DELETE FROM document_pages WHERE file_name=%s", (file_name,))
+                conn.commit()
+            self._bm25_loaded = False
+            return True
+        except Exception as exc:
+            raise RetrievalError(f"Failed to delete document {file_name}: {exc}") from exc
 
     def list_indexed_documents(self) -> list[dict[str, object]]:
         """Return read-only metadata for documents stored in PostgreSQL.

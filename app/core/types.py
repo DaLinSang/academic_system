@@ -441,6 +441,9 @@ class AgentState(_Base):
 
     memory_context: list[MemoryItem] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
+    # B 的全文读取路径：只在单篇文档总结时填充；普通 RAG 仍只使用 evidence。
+    document_text: str = ""
+    document_file_name: str | None = None
     tool_results: list[ToolResult] = Field(default_factory=list)
 
     draft_answer: str = ""

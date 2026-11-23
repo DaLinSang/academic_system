@@ -279,6 +279,15 @@ class MockRetriever:
     def index_document(self, pdf_path: str, document_id: str | None = None) -> int:
         return len(_FAKE_CORPUS)
 
+    def read_document(self, file_name: str) -> str:
+        rows = [row["text"] for row in _FAKE_CORPUS if row["file_name"] == file_name]
+        if not rows:
+            raise ValueError(f"Document is not indexed: {file_name}")
+        return "\n\n".join(rows)
+
+    def delete_document(self, file_name: str) -> bool:
+        return any(row["file_name"] == file_name for row in _FAKE_CORPUS)
+
 
 class MockMemoryStore:
     """内存版记忆存储。真实版本（阶段 2）由 B 用 PostgreSQL 实现。"""

@@ -174,6 +174,12 @@ class Orchestrator:
         # 2) 路由
         route = self._decide_route(state, enable_routing)
 
+        # B1: explicit single-document summary bypasses Top-K retrieval.  The
+        # retriever still owns parsing/caching; the generator only receives the
+        # persisted full text for this request.
+        if enable_retrieval and self._is_full_document_request(question):
+            self._load_full_document(state)
+
         # 3) 规划
         if route.need_planning:
             with self._stage(state, "plan") as ok:
@@ -243,6 +249,36 @@ class Orchestrator:
     # ------------------------------------------------------------------ #
     # 各阶段
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _is_full_document_request(question: str) -> bool:
+        return bool(re.search(
+            r"(?:总结|概括|分析|梳理|内容|讲了什么|全文|overview|summari[sz]e|analy[sz]e)",
+            question, re.I,
+        ))
+
+    def _load_full_document(self, state: AgentState) -> None:
+        reader = getattr(self.retriever, "read_document", None)
+        if not callable(reader):
+            return
+        names = re.findall(r"[\w.-]+\.pdf\b", state.question, re.I)
+        if not names:
+            listed = getattr(self.retriever, "list_indexed_documents", None)
+            if callable(listed):
+                try:
+                    docs = listed()
+                    if len(docs) == 1:
+                        names = [str(docs[0]["file_name"])]
+                except Exception as exc:  # noqa: BLE001
+                    state.log("document_read", "error", error=str(exc))
+        if len(names) != 1:
+            return
+        try:
+            state.document_text = reader(names[0])
+            state.document_file_name = names[0]
+            state.log("document_read", "end", file_name=names[0], chars=len(state.document_text))
+        except Exception as exc:  # noqa: BLE001
+            state.log("document_read", "error", error=str(exc), file_name=names[0])
+
     @staticmethod
     def _history_kw(state: AgentState) -> dict[str, list[ConversationTurn]]:
         """仅当存在历史时才传 history 关键字（Issue #44）。
