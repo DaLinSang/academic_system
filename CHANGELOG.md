@@ -15,8 +15,8 @@
 
 ### Added
 
-- `app/retrieval/tavily_search.py`：Tavily API 搜索后端（与 WebSearchTool 同接口，返回已清洗正文）（Issue #89）
-- 测试 `tests/test_tavily_search.py`（6 项）：结果转换、SSRF、无 key/错误/空结果、诊断脱敏（Issue #89）
+- `app/agent/web_search_fallback.py`：搜索后端降级包装（Tavily 失败/空结果自动回退 HTML）（Issue #96）
+- 测试 `tests/test_tavily_search.py`（4 项 review 新增）：credits 统计、主/备后端切换、全失败（Issue #96）
 - 测试 `tests/test_web_zero_result_71.py`（6 项）：零结果阻断、不误伤普通问答、结构化诊断不泄漏查询词（Issue #71）
 - 测试 `tests/test_memory_json_contract_70.py`（13 项）：对象/数组兼容、可诊断解析失败、敏感过滤、已记录纠错（Issue #70）
 - 测试 `tests/test_planned_source_64.py`（5 项）：Planner 子查询继承 PDF 来源、指代只用用户问题、trace 记录来源约束（Issue #64）
@@ -100,8 +100,12 @@
 
 ### Changed
 
-- `app/core/config.py`：新增 `SearchSettings`（TAVILY_API_KEY 等）；`app/agent/factory.py`：有 key 走 Tavily、无 key 回退 HTML（Issue #89）
-- `.env.example`：补充 Tavily 配置项（空值示例，无真实 key）（Issue #89）
+- `app/agent/factory.py`：Tavily 配 key 但失败/空结果时自动回退 WebSearchTool；web trace 单列 search_backend/search_credits，不混同 LLM token cost（Issue #96）
+- app/ui/presenters.py：区分网页候选全部无关与搜索后端失败，并显示长期记忆新增/矛盾更新/更新失败状态（Issue #89 / #97）
+- app/ui/streamlit_app.py：聊天界面收尾为左侧会话列表、中间聊天、右侧设置/文档/记忆三栏；窄屏自动堆叠（Issue #91）
+- 回答的来源引用、Claim Verification、运行信息默认折叠并显示数量；校验失败和运行异常仍在正文下方提示（Issue #91）
+- 上传 PDF 入口移动到聊天输入附近并复用原索引流程；统一浅色背景、边框、焦点态及深色主题下的可读对比度（Issue #91）
+- app/ui/presenters.py：新增会话导航摘要、回答面板计数及网页搜索进行中状态（Issue #91）
 - `app/verification/verifier.py`：排除指令确认、行为承诺、搜索运行状态和纯页码来源说明，避免非事实元话语被误标 unsupported（Issue #80）
 - `app/ui/streamlit_app.py`：检索 Top-K 默认值由 3 调整为 5，并说明综述/多文档比较会自动扩展到至少 6 条证据（Issue #81）
 - `app/agent/answer_generator.py`：web 已执行 count>0 时纠正“我无法联网”类错误表述，改为“已返回 N 条但无关”（Issue #83）

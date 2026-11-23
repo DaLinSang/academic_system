@@ -130,12 +130,14 @@ def build_stage1_orchestrator(
     llm = get_llm()
 
     def build_web_tool():
-        """Issue #89：有 Tavily key 走稳定 API，无 key 回退 HTML 爬取。"""
+        """Issue #89/#96：有 Tavily key 走 API，失败/空结果自动回退 HTML 爬取。"""
         if not enable_web_search:
             return None
         if settings.search.tavily_api_key:
+            from app.agent.web_search_fallback import FallbackSearchTool
             from app.retrieval.tavily_search import TavilySearchTool
-            return TavilySearchTool()
+            # B review：key 配了但 API 失败/空结果时不能直接返回空，要降级到 HTML
+            return FallbackSearchTool(TavilySearchTool(), WebSearchTool())
         return WebSearchTool()
 
     if memory_strategy == "rule":

@@ -91,3 +91,83 @@ def test_diagnostics_do_not_leak_query_or_key():
     tool.search(secret_query, top_k=3)
     blob = str(tool.last_diagnostics) + str(tool.last_warning)
     assert "test-key-12345" not in blob
+
+
+# --------------------------------------------------------------------------- #
+# Issue #96 review：失败回退 + credits 单列统计
+# --------------------------------------------------------------------------- #
+def test_tavily_credits_counted_per_call():
+    def handler(request):
+        return httpx.Response(200, json={"results": [
+            {"title": "x", "url": "https://example.com/x", "content": "y", "score": 0.5},
+        ]})
+
+    tool = tool_with(handler)
+    tool.search("test", top_k=3)
+    assert tool.last_search_calls == 1
+    assert tool.last_search_credits == 1
+
+
+def test_fallback_tool_uses_primary_when_ok():
+    from app.agent.web_search_fallback import FallbackSearchTool
+    from app.core.types import Evidence, RetrievalMethod
+
+    class Primary:
+        last_warning = None
+        last_diagnostics = []
+        last_search_credits = 1
+        def search(self, q, top_k=5):
+            return [Evidence(chunk_id="p", document_id="https://p.com", file_name="p.com",
+                             page_number=0, text="good", score=0.9,
+                             retrieval_method=RetrievalMethod.WEB, url="https://p.com")]
+
+    class Fallback:
+        def search(self, q, top_k=5):
+            raise AssertionError("主后端成功时不该调备用")
+
+    tool = FallbackSearchTool(Primary(), Fallback())
+    ev = tool.search("test", top_k=3)
+    assert len(ev) == 1
+    assert "Primary" in tool.last_backend
+    assert tool.last_search_credits == 1
+
+
+def test_fallback_tool_falls_back_when_primary_empty():
+    from app.agent.web_search_fallback import FallbackSearchTool
+    from app.core.types import Evidence, RetrievalMethod
+
+    class Primary:
+        last_warning = "Tavily 未返回可用结果"
+        last_diagnostics = [{"backend": "tavily", "kind": "zero_results"}]
+        last_search_credits = 1
+        def search(self, q, top_k=5):
+            return []
+
+    class Fallback:
+        last_warning = None
+        last_diagnostics = []
+        def search(self, q, top_k=5):
+            return [Evidence(chunk_id="f", document_id="https://f.com", file_name="f.com",
+                             page_number=0, text="fallback result", score=0.7,
+                             retrieval_method=RetrievalMethod.WEB, url="https://f.com")]
+
+    tool = FallbackSearchTool(Primary(), Fallback())
+    ev = tool.search("test", top_k=3)
+    assert len(ev) == 1 and "fallback result" in ev[0].text
+    assert "Fallback" in tool.last_backend
+    assert any(d.get("kind") == "primary_empty_fallback" for d in tool.last_diagnostics)
+
+
+def test_fallback_tool_all_fail_returns_empty():
+    from app.agent.web_search_fallback import FallbackSearchTool
+
+    class Broken:
+        last_warning = "fail"
+        last_diagnostics = []
+        def search(self, q, top_k=5):
+            return []
+
+    tool = FallbackSearchTool(Broken(), Broken())
+    assert tool.search("test", top_k=3) == []
+    assert tool.last_backend == "none"
+    assert tool.last_search_credits == 0

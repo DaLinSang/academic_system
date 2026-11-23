@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from app.core.types import RetrievalMethod
-from app.retrieval.web_search import WebSearchTool
+from app.retrieval.web_search import WebResult, WebSearchTool, _query_topics, _relevant_result
 
 DDG_HTML = """
 <html><body>
@@ -56,6 +56,37 @@ def test_search_returns_web_evidence():
     assert all(e.is_web for e in results)
     assert all(e.retrieval_method is RetrievalMethod.WEB for e in results)
     assert all(e.page_number == 0 for e in results)
+
+
+def test_pure_chinese_query_filters_unrelated_results():
+    query = "你上网帮我搜一下计算机科学专业怎么样"
+    assert _query_topics(query)
+    assert not _relevant_result(query, WebResult("鸣潮如何查看地图探索度", "https://example.com/game"))
+    assert _relevant_result(
+        query, WebResult("计算机科学与技术（本科专业）", "https://example.com/degree")
+    )
+
+
+def test_unrelated_search_hits_are_not_web_evidence():
+    unrelated = '<a class="result__a" href="https://chrome.google.com/">Chrome Web Browser</a>'
+    related = ('<a class="result__a" href="https://www.topuniversities.com/">'
+               'QS World University Rankings: University of Hong Kong</a>')
+
+    def handler(request):
+        if "duckduckgo" in str(request.url):
+            return httpx.Response(200, text=unrelated + related)
+        return httpx.Response(200, text=unrelated)
+
+    tool = make_tool(handler, fetch_pages=False)
+    result = tool.search("香港大学 QS 排名", top_k=1)
+    assert len(result) == 1
+    assert "University of Hong Kong" in result[0].title
+    assert tool.last_diagnostics[0]["candidates"] == 2
+    assert tool.last_diagnostics[0]["relevant_results"] == 1
+
+    assert tool.search("香港天气", top_k=3) == []
+    assert tool.last_diagnostics[0]["kind"] == "irrelevant_results"
+    assert tool.last_diagnostics[0]["relevant_results"] == 0
 
 
 def test_web_evidence_has_url_title_and_locator():

@@ -45,11 +45,16 @@ class TavilySearchTool:
         self._owns_client = client is None
         self.last_warning: str | None = None
         self.last_diagnostics: list[dict[str, object]] = []
+        # Issue #96 review：搜索 credits 单列统计，不混进 LLM token cost（RQ4）
+        self.last_search_calls = 0
+        self.last_search_credits = 0
 
     def search(self, query: str, top_k: int = 5) -> list[Evidence]:
         """失败返回空列表并写 last_warning，绝不抛异常打断回答。"""
         self.last_warning = None
         self.last_diagnostics = []
+        self.last_search_calls = 0
+        self.last_search_credits = 0
         if top_k <= 0 or not query.strip():
             return []
         if not self.api_key:
@@ -70,6 +75,9 @@ class TavilySearchTool:
             )
             response.raise_for_status()
             payload = response.json()
+            # 每次成功的 API 搜索消耗 1 credit（basic 深度）
+            self.last_search_calls = 1
+            self.last_search_credits = 1
         except Exception as exc:  # noqa: BLE001 - 网络/解析异常统一兜底
             self.last_warning = f"Tavily 搜索失败: {type(exc).__name__}"
             self.last_diagnostics.append({
