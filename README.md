@@ -85,6 +85,72 @@ uv run python -m app.demo --real -m B2 -q "讲义里 RRF 是怎么算的？"
 
 用 5434 是为了避开本机其它项目的 5432/5433。
 
+### OCR 环境配置（扫描版 PDF）
+
+普通 PDF 如果自带文字层，不需要 OCR；扫描版 PDF 或截图型 PDF 没有可搜索文字层，导入时需要先把页面转成图片，再由 Tesseract 识别文字。项目会保留原始页码，并把识别后的文字继续交给切分、索引和页码引用流程。
+
+#### macOS：Homebrew
+
+```bash
+brew install poppler tesseract
+
+# 检查两个命令是否真的在 PATH 中
+which pdftoppm
+which tesseract
+tesseract --list-langs
+```
+
+如果 PDF 含中文，再安装中文语言数据，并确认列表里出现 `chi_sim`：
+
+```bash
+brew install tesseract-lang
+export PDF_OCR_LANG=eng+chi_sim
+```
+
+如果 macOS 14 上 Homebrew 因 Poppler 编译失败，推荐使用 MacPorts：
+
+```bash
+sudo port selfupdate
+sudo port install poppler tesseract
+export PATH=/opt/local/bin:$PATH
+which pdftoppm
+which tesseract
+```
+
+#### Windows
+
+1. 安装 Poppler，并把包含 `pdftoppm.exe` 的 `bin` 目录加入系统 `PATH`。
+2. 安装 Tesseract，并把包含 `tesseract.exe` 的目录加入 `PATH`。
+3. 中文识别需要把 `chi_sim.traineddata` 放到 Tesseract 的 `tessdata` 目录。
+4. 重新打开终端，确认 `where pdftoppm`、`where tesseract` 和 `tesseract --list-langs` 都能找到命令和语言包。
+
+#### Docker / Linux
+
+Debian/Ubuntu 环境可使用：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y poppler-utils tesseract-ocr tesseract-ocr-chi-sim
+export PDF_OCR_LANG=eng+chi_sim
+```
+
+容器中安装后，必须在**运行 Streamlit 或索引脚本的同一个容器**里检查命令；只在宿主机安装不会自动让容器使用它们。
+
+#### OCR 验证与重新索引
+
+先把扫描版 PDF 放入 `data/raw/`，再检查工具：
+
+```bash
+which pdftoppm tesseract       # Windows 使用 where
+tesseract --list-langs
+uv run python scripts/index_pdfs.py --list
+uv run python scripts/index_pdfs.py
+```
+
+看到 OCR 页数、chunk 数和索引成功，才表示完成了“扫描 PDF → OCR → 入库 → 检索”链路。安装工具后不会自动修复旧的失败记录，需要重新索引。若仍显示 `No searchable text found in PDF`，优先检查：命令是否在当前终端的 PATH、中文语言包是否存在、PDF 是否确实是扫描图像，以及 Streamlit/ Docker 是否使用了另一个 Python 或容器环境。OCR 处理大文件会比普通文字 PDF 慢，请等待页面显示完成或先用 1–2 页测试文件验证。
+
+更完整的模块说明、Windows 路径示例和端到端验收步骤见 [`app/ingestion/README.md`](app/ingestion/README.md) 与 [`docs/b-ocr-coverage-test-2026-11-19.md`](docs/b-ocr-coverage-test-2026-11-19.md)。
+
 ## 3. 仓库结构
 
 ```
