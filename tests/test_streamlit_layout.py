@@ -88,3 +88,21 @@ def test_claim_divider_does_not_split_inline_insufficient_material_text() -> Non
     answer = "根据现有资料不足以回答全部问题，但可以说明已知内容。"
 
     assert _split_answer_sections(answer) == (answer, "")
+
+
+def test_claim_divider_recognises_short_insufficient_material_heading() -> None:
+    body, feedback = _split_answer_sections(
+        "正常回答。\n\n资料不足的部分：\n- 缺少课程评估方式。"
+    )
+
+    assert body == "正常回答。"
+    assert feedback.startswith("资料不足的部分：")
+
+
+def test_claim_divider_recognises_unanswerable_evidence_heading() -> None:
+    body, feedback = _split_answer_sections(
+        "正常回答。\n\n**无法根据现有证据回答的部分**：\n- 缺少完整目录。"
+    )
+
+    assert body == "正常回答。"
+    assert feedback.startswith("**无法根据现有证据回答的部分**：")
