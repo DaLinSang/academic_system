@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime, timedelta
+from hashlib import sha256
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 from uuid import uuid4
 
@@ -15,6 +17,7 @@ from app.agent.orchestrator import MODE_PRESETS
 from app.agent.session_store import SessionStore
 from app.core.config import settings
 from app.core.types import AgentState, ConversationTurn
+from app.ingestion.pdf_parser import parse_pdf
 from app.ui.presenters import (
     answer_panel_summary,
     claim_presentations,
@@ -454,6 +457,11 @@ def _render_state(
 ) -> None:
     answer_body, claim_feedback = _split_answer_sections(state.final_answer)
     st.markdown(answer_body)
+    if state.attached_document_file_name:
+        st.caption(
+            f"本轮基于对话内文档《{state.attached_document_file_name}》通读生成；"
+            "该文件未写入知识库。"
+        )
     st.markdown('<hr class="aa-claim-divider">', unsafe_allow_html=True)
     if claim_feedback:
         st.markdown(claim_feedback)
@@ -567,14 +575,14 @@ def _document_counts(
 
 def _render_upload(orch: Any, runtime: str) -> None:
     uploaded = st.file_uploader(
-        "上传 PDF",
+        "上传到知识库",
         type=["pdf"],
         accept_multiple_files=False,
-        key="chat-pdf-upload",
-        help="入口位于聊天框附近，长对话滚动到底部即可快速导入。",
+        key="knowledge-pdf-upload",
+        help="保存到资料库并建立索引，可在之后的会话中继续检索。",
     )
     if uploaded is None or not st.button(
-        "保存并导入文档", key="chat-pdf-import", use_container_width=True
+        "保存并导入文档", key="knowledge-pdf-import", use_container_width=True
     ):
         return
 
@@ -634,6 +642,80 @@ def _render_upload(orch: Any, runtime: str) -> None:
             progress.update(label=f"{name} 导入失败", state="error", expanded=True)
             st.error(f"文档未建立索引：{upload_error_message(exc)}")
             st.caption("文件仍保存在上传目录；修复依赖后可点击同一按钮重试。")
+
+
+def _parse_chat_attachment(file_name: str, payload: bytes) -> dict[str, str]:
+    """Parse one conversation-only PDF without touching the RAG data directory."""
+    display_name = safe_pdf_name(file_name)
+    with TemporaryDirectory(prefix="academic-chat-") as temp_dir:
+        path = Path(temp_dir) / display_name
+        path.write_bytes(payload)
+        chunks = parse_pdf(str(path))
+    full_text = "\n\n".join(
+        f"[Page {chunk.page_number}]\n{chunk.text}"
+        for chunk in chunks
+        if chunk.text.strip()
+    )
+    if not full_text.strip():
+        raise ValueError("PDF 未提取到可供分析的文字。")
+    return {"file_name": display_name, "text": full_text}
+
+
+def _chat_attachments() -> dict[str, dict[str, str]]:
+    return st.session_state.setdefault("chat_attachments", {})
+
+
+def _chat_attachment_generations() -> dict[str, int]:
+    return st.session_state.setdefault("chat_attachment_generations", {})
+
+
+def _attachment_key(user_id: str, session_id: str) -> str:
+    return f"{user_id}:{session_id}"
+
+
+def _render_chat_attachment(user_id: str, session_id: str) -> dict[str, str] | None:
+    """Render the temporary chat attachment control and return its parsed text."""
+    attachments = _chat_attachments()
+    attachment_key = _attachment_key(user_id, session_id)
+    current = attachments.get(attachment_key)
+    generations = _chat_attachment_generations()
+    generation = generations.get(attachment_key, 0)
+    uploader_key = (
+        f"chat-attachment-upload-{user_id}-{session_id}-{generation}"
+    )
+    uploaded = st.file_uploader(
+        "临时 PDF",
+        type=["pdf"],
+        accept_multiple_files=False,
+        key=uploader_key,
+        help="只在当前会话中通读，不保存到知识库。",
+        label_visibility="collapsed",
+    )
+    if uploaded is not None:
+        payload = uploaded.getvalue()
+        fingerprint = sha256(payload).hexdigest()
+        if not current or current.get("fingerprint") != fingerprint:
+            try:
+                with st.spinner("正在解析对话内 PDF…"):
+                    parsed = _parse_chat_attachment(uploaded.name, payload)
+            except Exception as exc:  # noqa: BLE001 - keep the conversation usable
+                st.error(f"临时 PDF 解析失败：{upload_error_message(exc)}")
+                return current
+            current = {**parsed, "fingerprint": fingerprint}
+            attachments[attachment_key] = current
+            st.success(f"已附加《{current['file_name']}》，不会写入知识库。")
+
+    if current:
+        st.caption(f"当前会话附件：《{current['file_name']}》")
+        if st.button(
+            "移除附件",
+            key=f"chat-attachment-remove-{user_id}-{session_id}",
+            use_container_width=True,
+        ):
+            attachments.pop(attachment_key, None)
+            generations[attachment_key] = generation + 1
+            st.rerun()
+    return current
 
 
 def _render_documents(
@@ -1047,9 +1129,10 @@ def main() -> None:
 
         pending_turn = st.container()
         upload_col, _ = st.columns([1, 5])
+        chat_attachment = _chat_attachments().get(_attachment_key(user_id, session_id))
         with upload_col:
-            with st.popover("＋ 上传 PDF", use_container_width=True):
-                _render_upload(orch, runtime)
+            with st.popover("＋ 临时 PDF", use_container_width=True):
+                chat_attachment = _render_chat_attachment(user_id, session_id)
         question = st.chat_input("请输入文档问题、论文比较或研究任务")
         if question:
             flags = dict(MODE_PRESETS[mode])
@@ -1079,6 +1162,14 @@ def main() -> None:
                             user_id=user_id,
                             turn_index=len(turns),
                             history=turns,
+                            attached_document_text=(
+                                chat_attachment.get("text", "")
+                                if chat_attachment else ""
+                            ),
+                            attached_document_file_name=(
+                                chat_attachment.get("file_name")
+                                if chat_attachment else None
+                            ),
                             **flags,
                         )
                         run_status.write(
@@ -1116,6 +1207,8 @@ def main() -> None:
             with st.expander(
                 f"文档状态 · {uploaded_documents} 个文件", expanded=True
             ):
+                with st.popover("＋ 添加到知识库", use_container_width=True):
+                    _render_upload(orch, runtime)
                 _render_documents(
                     orch, runtime, persisted_indexes, index_status_error
                 )

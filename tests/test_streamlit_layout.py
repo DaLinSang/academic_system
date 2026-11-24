@@ -1,10 +1,11 @@
 """Structural smoke tests for the Codex-style Streamlit layout."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from streamlit.testing.v1 import AppTest
 
-from app.ui.streamlit_app import _split_answer_sections
+from app.ui.streamlit_app import _attachment_key, _parse_chat_attachment, _split_answer_sections
 
 APP_PATH = Path(__file__).parents[1] / "app" / "ui" / "streamlit_app.py"
 
@@ -23,7 +24,12 @@ def test_chat_layout_exposes_session_list_right_rail_and_input() -> None:
     )
     assert any(expander.label.startswith("运行信息") for expander in app.expander)
     assert len(app.chat_input) == 1
-    assert len(app.get("file_uploader")) == 1
+    uploaders = app.get("file_uploader")
+    assert len(uploaders) == 2
+    assert {uploader.label for uploader in uploaders} == {
+        "临时 PDF",
+        "上传到知识库",
+    }
     assert not any(selectbox.label == "当前会话" for selectbox in app.selectbox)
     assert not any(expander.label == "设置" for expander in app.expander)
     assert not any(expander.label == "长期记忆" for expander in app.expander)
@@ -106,3 +112,30 @@ def test_claim_divider_recognises_unanswerable_evidence_heading() -> None:
 
     assert body == "正常回答。"
     assert feedback.startswith("**无法根据现有证据回答的部分**：")
+
+
+def test_chat_attachment_is_parsed_in_temporary_directory(monkeypatch) -> None:
+    parsed_path: Path | None = None
+
+    def fake_parse(path: str):
+        nonlocal parsed_path
+        parsed_path = Path(path)
+        assert parsed_path.exists()
+        return [
+            SimpleNamespace(page_number=1, text="第一页内容"),
+            SimpleNamespace(page_number=2, text="第二页内容"),
+        ]
+
+    monkeypatch.setattr("app.ui.streamlit_app.parse_pdf", fake_parse)
+    result = _parse_chat_attachment("../临时论文.pdf", b"pdf bytes")
+
+    assert result["file_name"] == "临时论文.pdf"
+    assert result["text"] == "[Page 1]\n第一页内容\n\n[Page 2]\n第二页内容"
+    assert parsed_path is not None and not parsed_path.exists()
+
+
+def test_chat_attachment_key_is_scoped_to_user_and_session() -> None:
+    assert _attachment_key("user-a", "chat-1") == "user-a:chat-1"
+    assert _attachment_key("user-a", "chat-1") != _attachment_key(
+        "user-a", "chat-2"
+    )
