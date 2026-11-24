@@ -29,7 +29,9 @@ SemanticVerifier 与 LexicalVerifier 都实现冻结的 Verifier Protocol：
 返回 app.core.types.ClaimCheck 列表。supporting_evidence 只包含输入 Evidence 中真实存在的 chunk_id，供 UI 定位文件和页码。
 
 Prompt、当前会话和长期记忆通过 `build_verification_context()` 建立独立的
-`VerificationContext`。这些来源可以支持用户自述或偏好，但
+`VerificationContext` 契约。当前 `Verifier.verify()` 和 A 的 Orchestrator 尚未消费
+该对象，因此它是待接线能力，不应宣称已经参与端到端校验。接线后，这些来源只
+可以支持用户自述或偏好，且
 `academic_citation=False`，不能伪装成 PDF/Web Evidence 或显示为学术引用。冲突时
 优先级为：当前 Prompt > 最近会话 > 长期记忆。
 

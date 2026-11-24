@@ -112,8 +112,48 @@ h1, h2, h3 { letter-spacing: -0.025em; }
 [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] p {
   line-height: 1.68;
   font-size: .96rem;
-  max-width: 78ch;
+  max-width: 82ch;
 }
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] {
+  width: 100%;
+  max-width: 82ch;
+  font-size: .96rem;
+  line-height: 1.62;
+}
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] :is(p, li, td, th, blockquote) {
+  font-size: .96rem !important;
+  line-height: 1.62 !important;
+}
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] h1 { font-size: 1.22rem !important; }
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] h2 { font-size: 1.12rem !important; }
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] h3,
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] h4 { font-size: 1.03rem !important; }
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] :is(div, section, article) {
+  max-width: 100%;
+}
+.aa-claim-divider {
+  border-top: 1px dashed var(--aa-border-strong);
+  margin: 1rem 0 .75rem;
+}
+.aa-claim-card {
+  border-left: 3px solid var(--aa-accent);
+  background: var(--aa-accent-soft);
+  border-radius: 6px;
+  padding: .55rem .7rem;
+  margin: .35rem 0;
+}
+.aa-document-row {
+  padding: .35rem 0 .45rem;
+  border-bottom: 1px solid var(--aa-border);
+}
+.aa-document-row p { margin: 0 !important; line-height: 1.35 !important; }
 [data-testid="stChatMessageAvatarUser"],
 [data-testid="stChatMessageAvatarAssistant"] {
   background: var(--aa-accent-soft);
@@ -296,8 +336,14 @@ def _render_claims(state: AgentState) -> None:
             detail += f" · 证据：{source_text}"
         if row["note"]:
             detail += f" · {row['note']}"
-        message = f"**{row['label']}** · {row['claim']}\n\n{detail}"
-        getattr(st, row["level"])(message)
+        title = f"{row['label']} · {row['claim'][:72]}"
+        if len(row["claim"]) > 72:
+            title += "…"
+        with st.expander(title, expanded=False):
+            st.markdown('<div class="aa-claim-card">', unsafe_allow_html=True)
+            st.markdown(row["claim"])
+            st.caption(detail)
+            st.markdown("</div>", unsafe_allow_html=True)
 
 
 def _render_state(
@@ -331,8 +377,7 @@ def _render_state(
                         f"**[{citation['index']}] {citation['file_name']} "
                         f"第 {citation['page_number']} 页**"
                     )
-                if citation["quote"]:
-                    st.caption(citation["quote"])
+    st.markdown('<div class="aa-claim-divider"></div>', unsafe_allow_html=True)
     with st.expander(
         f"Claim Verification · {summary['claims']} 条"
         + (f" · {summary['unsupported']} 条需注意" if summary["unsupported"] else ""),
@@ -346,7 +391,6 @@ def _render_state(
     ):
         if state.route:
             st.write("Router:", state.route.route.value, "-", state.route.reason)
-        st.caption(f"用户：{state.user_id} · 会话：{state.session_id} · 轮次：{state.turn_index}")
         source_level, source_message = source_status(
             state,
             uploaded_documents=uploaded_documents,
@@ -510,10 +554,11 @@ def _render_documents(
                 persisted=persisted.get(name),
             )
             icon = "✓" if row["level"] == "success" else "!" if row["level"] == "error" else "•"
-            st.markdown(f"**{icon} {name}**")
-            st.caption(row["label"])
-            if row["detail"]:
-                st.caption(row["detail"])
+            st.markdown(
+                f'<div class="aa-document-row"><strong>{icon} {name}</strong><br>'
+                f'<span class="aa-muted">{row["label"]}</span></div>',
+                unsafe_allow_html=True,
+            )
             if runtime == "Real":
                 with st.popover(
                     "文档操作",
@@ -714,12 +759,12 @@ def _render_session_actions(
 
 def _render_session_sidebar(
     store: SessionStore,
-) -> tuple[str, str, str, str, int, bool, bool]:
+) -> tuple[str, str]:
     """Render a scan-friendly, user-isolated conversation list."""
     with st.sidebar:
         st.markdown('<div class="aa-kicker">ACADEMIC RESEARCH</div>', unsafe_allow_html=True)
         st.subheader("会话")
-        user_id = st.text_input("用户 ID", key="user_id").strip()
+        user_id = str(st.session_state.user_id).strip()
         try:
             sessions = store.list_sessions(user_id)
         except ValueError as exc:
@@ -770,32 +815,34 @@ def _render_session_sidebar(
                     )
 
         session_id = current
-        with st.expander("设置", expanded=False):
-            runtime = st.radio(
-                "运行链路", ["Mock", "Real"], horizontal=True, key="runtime"
-            )
-            mode = st.selectbox(
-                "评测模式",
-                sorted(MODE_PRESETS),
-                key="evaluation_mode",
-                on_change=_sync_mode_flags,
-            )
-            top_k = st.slider("检索 Top-K", 1, 10, 5)
-            enable_memory = st.checkbox("长期记忆", key="enable_memory")
-            enable_verification = st.checkbox(
-                "Claim Verification", key="enable_verification"
-            )
-            st.caption("Real 使用 .env 模型；Mock 无需 API 或数据库。")
-        st.caption("共享文档库 · 会话按用户隔离")
-    return (
-        user_id,
-        session_id,
-        runtime,
-        mode,
-        top_k,
-        enable_memory,
-        enable_verification,
+    return user_id, session_id
+
+
+@st.dialog("设置")
+def _settings_dialog() -> None:
+    st.text_input("用户 ID", key="user_id")
+    st.radio("运行链路", ["Mock", "Real"], horizontal=True, key="runtime")
+    st.selectbox(
+        "评测模式",
+        sorted(MODE_PRESETS),
+        key="evaluation_mode",
+        on_change=_sync_mode_flags,
     )
+    st.slider("检索 Top-K", 1, 10, key="top_k")
+    st.checkbox("长期记忆", key="enable_memory")
+    st.checkbox("Claim Verification", key="enable_verification")
+    st.caption("Real 使用 .env 模型；Mock 无需 API 或数据库。")
+
+
+@st.dialog("长期记忆", width="large")
+def _memory_dialog(
+    orch: Any,
+    user_id: str,
+    session_id: str,
+    enabled: bool,
+    latest_state: AgentState | None,
+) -> None:
+    _render_memories(orch, user_id, session_id, enabled, latest_state)
 
 
 def main() -> None:
@@ -805,6 +852,7 @@ def main() -> None:
         st.session_state.evaluation_mode = "B4"
         _sync_mode_flags()
     st.session_state.setdefault("runtime", "Mock")
+    st.session_state.setdefault("top_k", 5)
     st.session_state.setdefault("inspector_open", True)
 
     store = _session_store()
@@ -813,15 +861,12 @@ def main() -> None:
     pending = st.session_state.pop("pending_session_id", None)
     if pending:
         st.session_state.session_selector = pending
-    (
-        user_id,
-        session_id,
-        runtime,
-        mode,
-        top_k,
-        enable_memory,
-        enable_verification,
-    ) = _render_session_sidebar(store)
+    user_id, session_id = _render_session_sidebar(store)
+    runtime = st.session_state.runtime
+    mode = st.session_state.evaluation_mode
+    top_k = int(st.session_state.top_k)
+    enable_memory = bool(st.session_state.enable_memory)
+    enable_verification = bool(st.session_state.enable_verification)
 
     orch = _get_orchestrator(runtime, top_k)
     if st.session_state.get("loaded_session") != (user_id, session_id):
@@ -838,6 +883,22 @@ def main() -> None:
     )
 
     with chat_col:
+        header_space, settings_col, memory_col = st.columns([8, 1, 1.25], gap="small")
+        with settings_col:
+            if st.button("设置", icon=":material/settings:", use_container_width=True):
+                _settings_dialog()
+        with memory_col:
+            if st.button(
+                "长期记忆", icon=":material/memory:", use_container_width=True
+            ):
+                latest_state = (
+                    st.session_state.history[-1]["state"]
+                    if st.session_state.history
+                    else None
+                )
+                _memory_dialog(
+                    orch, user_id, session_id, enable_memory, latest_state
+                )
         st.markdown(
             '<section class="aa-hero">'
             '<div class="aa-hero-kicker">Evidence-grounded research assistant</div>'
@@ -864,6 +925,8 @@ def main() -> None:
             st.caption("上传后可直接提问；失败时旧索引状态会继续保留。")
         question = st.chat_input("请输入文档问题、论文比较或研究任务")
         if question:
+            with st.chat_message("user"):
+                st.markdown(question)
             flags = dict(MODE_PRESETS[mode])
             flags["enable_memory"] = enable_memory
             flags["enable_verification"] = enable_verification
@@ -909,14 +972,14 @@ def main() -> None:
             rail_title, rail_toggle = st.columns([3.8, 1.5], gap="small")
             with rail_title:
                 st.markdown(
-                    '<div class="aa-rail-header"><div class="aa-rail-title">资料与记忆</div>'
+                    '<div class="aa-rail-header"><div class="aa-rail-title">文档资料</div>'
                     '<div class="aa-rail-subtitle">固定在右侧，可独立展开</div></div>',
                     unsafe_allow_html=True,
                 )
             if rail_toggle.button(
                 "×",
                 key="inspector-close",
-                help="收起资料与记忆",
+                help="收起文档资料",
                 use_container_width=True,
             ):
                 st.session_state.inspector_open = False
@@ -927,19 +990,10 @@ def main() -> None:
                 _render_documents(
                     orch, runtime, persisted_indexes, index_status_error
                 )
-            latest_state = (
-                st.session_state.history[-1]["state"]
-                if st.session_state.history
-                else None
-            )
-            with st.expander("长期记忆", expanded=False):
-                _render_memories(
-                    orch, user_id, session_id, enable_memory, latest_state
-                )
         elif st.button(
             "展开",
             key="inspector-open",
-            help="展开资料与记忆",
+            help="展开文档资料",
             use_container_width=True,
         ):
             st.session_state.inspector_open = True

@@ -12,9 +12,9 @@ def test_chat_layout_exposes_session_list_right_rail_and_input() -> None:
 
     assert not app.exception
     assert any("新建会话" in button.label for button in app.button)
-    assert any(expander.label == "设置" for expander in app.expander)
+    assert any(button.label == "设置" for button in app.button)
+    assert any(button.label == "长期记忆" for button in app.button)
     assert any(expander.label.startswith("文档状态") for expander in app.expander)
-    assert any(expander.label == "长期记忆" for expander in app.expander)
     assert any(
         expander.label.startswith("Claim Verification")
         for expander in app.expander
@@ -23,3 +23,5 @@ def test_chat_layout_exposes_session_list_right_rail_and_input() -> None:
     assert len(app.chat_input) == 1
     assert len(app.get("file_uploader")) == 1
     assert not any(selectbox.label == "当前会话" for selectbox in app.selectbox)
+    assert not any(expander.label == "设置" for expander in app.expander)
+    assert not any(expander.label == "长期记忆" for expander in app.expander)
