@@ -109,25 +109,32 @@ h1, h2, h3 { letter-spacing: -0.025em; }
   padding: .65rem .2rem 1rem;
   margin-bottom: .35rem;
 }
-[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] p {
-  line-height: 1.68;
-  font-size: .96rem;
-  max-width: 82ch;
-}
 [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] {
   width: 100%;
   max-width: 82ch;
   font-size: .96rem;
   line-height: 1.62;
 }
-[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] :is(p, li, td, th, blockquote) {
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] :is(
+  p, li, td, th, blockquote, strong, em, code, span
+) {
   font-size: .96rem !important;
   line-height: 1.62 !important;
 }
-[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] h1 { font-size: 1.22rem !important; }
-[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] h2 { font-size: 1.12rem !important; }
-[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] h3,
-[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] h4 { font-size: 1.03rem !important; }
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] :is(h1, h2, h3, h4, h5, h6) {
+  font-size: .96rem !important;
+  line-height: 1.62 !important;
+  margin: .7rem 0 .25rem !important;
+}
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] :is(ol, ul) {
+  margin-top: .3rem !important;
+  margin-bottom: .55rem !important;
+}
+[data-testid="stChatMessage"] [data-testid="stAlert"] :is(p, li, strong, span),
+[data-testid="stChatMessage"] [data-testid="stExpander"] :is(p, li, strong, span) {
+  font-size: .9rem !important;
+  line-height: 1.55 !important;
+}
 [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] table {
   display: block;
   width: 100%;
@@ -139,8 +146,10 @@ h1, h2, h3 { letter-spacing: -0.025em; }
   max-width: 100%;
 }
 .aa-claim-divider {
-  border-top: 1px dashed var(--aa-border-strong);
+  border: 0 !important;
+  border-top: 2px dashed var(--aa-border-strong) !important;
   margin: 1rem 0 .75rem;
+  width: 100%;
 }
 .aa-claim-card {
   border-left: 3px solid var(--aa-accent);
@@ -154,6 +163,30 @@ h1, h2, h3 { letter-spacing: -0.025em; }
   border-bottom: 1px solid var(--aa-border);
 }
 .aa-document-row p { margin: 0 !important; line-height: 1.35 !important; }
+[class*="st-key-top_actions"] {
+  position: fixed !important;
+  top: .35rem;
+  right: 8.2rem;
+  z-index: 1000000;
+  width: 15.2rem !important;
+}
+[class*="st-key-top_actions"] div[data-testid="stHorizontalBlock"] {
+  gap: .35rem !important;
+  align-items: center;
+}
+[class*="st-key-top_actions"] button {
+  min-height: 2.15rem !important;
+  height: 2.15rem !important;
+  padding: .2rem .65rem !important;
+  background: var(--aa-panel) !important;
+  color: var(--aa-text) !important;
+  border: 1px solid var(--aa-border-strong) !important;
+  box-shadow: 0 1px 4px var(--aa-shadow);
+}
+[class*="st-key-top_actions"] button:hover {
+  background: var(--aa-accent-soft) !important;
+  border-color: var(--aa-accent) !important;
+}
 [data-testid="stChatMessageAvatarUser"],
 [data-testid="stChatMessageAvatarAssistant"] {
   background: var(--aa-accent-soft);
@@ -293,6 +326,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   }
   div[data-testid="stHorizontalBlock"]:has(.right-rail-marker)
   > div[data-testid="stColumn"] { width: 100% !important; }
+  [class*="st-key-top_actions"] {
+    right: 6.5rem;
+    width: 13.5rem !important;
+  }
 }
 </style>
 """
@@ -325,6 +362,13 @@ def _render_claims(state: AgentState) -> None:
             getattr(st, notice[0])(notice[1])
         return
     for row in claim_presentations(state):
+        display_claim = (
+            row["claim"]
+            .replace("**", "")
+            .replace("__", "")
+            .replace("`", "")
+            .strip()
+        )
         source_text = "；".join(
             f"[{source['locator']}]({source['url']})"
             if source["is_web"] and source["url"]
@@ -336,14 +380,13 @@ def _render_claims(state: AgentState) -> None:
             detail += f" · 证据：{source_text}"
         if row["note"]:
             detail += f" · {row['note']}"
-        title = f"{row['label']} · {row['claim'][:72]}"
-        if len(row["claim"]) > 72:
+        title = f"{row['label']} · {display_claim[:72]}"
+        if len(display_claim) > 72:
             title += "…"
         with st.expander(title, expanded=False):
-            st.markdown('<div class="aa-claim-card">', unsafe_allow_html=True)
-            st.markdown(row["claim"])
-            st.caption(detail)
-            st.markdown("</div>", unsafe_allow_html=True)
+            with st.container(border=True):
+                st.markdown(display_claim)
+                st.caption(detail)
 
 
 def _render_state(
@@ -377,7 +420,7 @@ def _render_state(
                         f"**[{citation['index']}] {citation['file_name']} "
                         f"第 {citation['page_number']} 页**"
                     )
-    st.markdown('<div class="aa-claim-divider"></div>', unsafe_allow_html=True)
+    st.markdown('<hr class="aa-claim-divider">', unsafe_allow_html=True)
     with st.expander(
         f"Claim Verification · {summary['claims']} 条"
         + (f" · {summary['unsupported']} 条需注意" if summary["unsupported"] else ""),
@@ -831,7 +874,6 @@ def _settings_dialog() -> None:
     st.slider("检索 Top-K", 1, 10, key="top_k")
     st.checkbox("长期记忆", key="enable_memory")
     st.checkbox("Claim Verification", key="enable_verification")
-    st.caption("Real 使用 .env 模型；Mock 无需 API 或数据库。")
 
 
 @st.dialog("长期记忆", width="large")
@@ -882,8 +924,13 @@ def main() -> None:
         [3.75, 1.15] if inspector_open else [4.7, 0.65], gap="large"
     )
 
-    with chat_col:
-        header_space, settings_col, memory_col = st.columns([8, 1, 1.25], gap="small")
+    latest_state = (
+        st.session_state.history[-1]["state"]
+        if st.session_state.history
+        else None
+    )
+    with st.container(key="top_actions"):
+        settings_col, memory_col = st.columns([1, 1.25], gap="small")
         with settings_col:
             if st.button("设置", icon=":material/settings:", use_container_width=True):
                 _settings_dialog()
@@ -891,19 +938,14 @@ def main() -> None:
             if st.button(
                 "长期记忆", icon=":material/memory:", use_container_width=True
             ):
-                latest_state = (
-                    st.session_state.history[-1]["state"]
-                    if st.session_state.history
-                    else None
-                )
                 _memory_dialog(
                     orch, user_id, session_id, enable_memory, latest_state
                 )
+
+    with chat_col:
         st.markdown(
             '<section class="aa-hero">'
-            '<div class="aa-hero-kicker">Evidence-grounded research assistant</div>'
             '<h1>Agentic Academic Assistant</h1>'
-            '<p>面向课程讲义与研究文献的检索、引用、记忆与 Claim Verification</p>'
             '</section>',
             unsafe_allow_html=True,
         )
@@ -917,12 +959,10 @@ def main() -> None:
                     indexed_documents=indexed_documents,
                 )
 
-        upload_col, input_hint_col = st.columns([1, 5])
+        upload_col, _ = st.columns([1, 5])
         with upload_col:
             with st.popover("＋ 上传 PDF", use_container_width=True):
                 _render_upload(orch, runtime)
-        with input_hint_col:
-            st.caption("上传后可直接提问；失败时旧索引状态会继续保留。")
         question = st.chat_input("请输入文档问题、论文比较或研究任务")
         if question:
             with st.chat_message("user"):
@@ -972,8 +1012,7 @@ def main() -> None:
             rail_title, rail_toggle = st.columns([3.8, 1.5], gap="small")
             with rail_title:
                 st.markdown(
-                    '<div class="aa-rail-header"><div class="aa-rail-title">文档资料</div>'
-                    '<div class="aa-rail-subtitle">固定在右侧，可独立展开</div></div>',
+                    '<div class="aa-rail-header"><div class="aa-rail-title">文档资料</div></div>',
                     unsafe_allow_html=True,
                 )
             if rail_toggle.button(
