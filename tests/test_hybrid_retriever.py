@@ -79,6 +79,74 @@ def test_retrieve_returns_empty_for_empty_query() -> None:
     assert retriever.retrieve("retrieval", top_k=0) == []
 
 
+def test_retrieve_for_claim_scopes_before_ranking(monkeypatch) -> None:
+    """Global top results may all be from a competing document."""
+    class FailingEmbedder:
+        def embed(self, text: str) -> list[float]:
+            raise RetrievalError("Ollama unavailable")
+
+    retriever = HybridRetriever(embedder=FailingEmbedder())
+    competitors = [
+        DocumentChunk(
+            chunk_id=f"other-{i}", document_id="other", file_name="other.pdf",
+            page_number=i + 1, text="RAG architecture retrieval generator " * 3,
+        )
+        for i in range(25)
+    ]
+    target = DocumentChunk(
+        chunk_id="target", document_id="target", file_name="target.pdf",
+        page_number=7, text="RAG architecture includes a retriever and generator.",
+    )
+    target.text = "RAG architecture " + "unrelated detail " * 80
+    fillers = [
+        DocumentChunk(
+            chunk_id=f"filler-{i}", document_id="filler", file_name="filler.pdf",
+            page_number=i + 1, text="unrelated course material",
+        )
+        for i in range(30)
+    ]
+    retriever._bm25._replace_document_chunks([*competitors, *fillers, target])
+    retriever._bm25_loaded = True
+
+    assert all(
+        item.file_name == "other.pdf"
+        for item in retriever.retrieve("RAG architecture", top_k=3)
+    )
+    results = retriever.retrieve_for_claim("RAG architecture", ["target.pdf"], top_k=3)
+
+    assert [(item.chunk_id, item.file_name, item.page_number) for item in results] == [
+        ("target", "target.pdf", 7)
+    ]
+    assert "using BM25 only" in retriever.last_warning
+
+
+def test_retrieve_for_claim_never_falls_back_for_unknown_file(monkeypatch) -> None:
+    retriever = HybridRetriever(embedder=FakeEmbedder())
+    retriever._bm25._replace_document_chunks([make_chunk("other", "RAG evidence", 1)])
+    retriever._bm25_loaded = True
+    monkeypatch.setattr(
+        retriever, "_retrieve_documents",
+        lambda *args, **kwargs: pytest.fail("must not search another file"),
+    )
+
+    assert retriever.retrieve_for_claim("RAG evidence", ["missing.pdf"]) == []
+    assert "missing.pdf" in retriever.last_warning
+
+
+def test_retrieve_for_claim_limits_vector_query_to_requested_files(monkeypatch) -> None:
+    retriever = HybridRetriever(embedder=FakeEmbedder())
+    retriever._bm25._replace_document_chunks([make_chunk("target", "RAG evidence", 2)])
+    retriever._bm25_loaded = True
+    connection = FakeVectorConnection()
+    monkeypatch.setattr(retriever, "_connect", lambda: connection)
+
+    results = retriever.retrieve_for_claim("RAG evidence", ["demo.pdf"], top_k=2)
+
+    assert [item.file_name for item in results] == ["demo.pdf"]
+    assert "WHERE file_name = ANY(%s)" in connection.query
+    assert connection.params[1] == ["demo.pdf"]
+
+
 def test_retrieve_uses_bm25_when_ollama_fails(monkeypatch) -> None:
     class FailingEmbedder:
         def embed(self, text: str) -> list[float]:
