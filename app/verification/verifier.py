@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any
 
 from app.core.interfaces import LLM
@@ -19,6 +20,18 @@ _SENTENCE_SPLIT = re.compile(r"[。！？!?\n]+|(?<=[.])\s+(?=[A-Z0-9])")
 _CITATION = re.compile(r"\[(\d+)\]")
 _PAGE_LOCATOR = re.compile(r"[（(][^）)]*第\s*\d+\s*页[^）)]*[）)]")
 _LIST_PREFIX = re.compile(r"^(?:[-•*·]+|\d+[.)、])\s*")
+_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+")
+_SECTION_LABEL = re.compile(
+    r"^(?:文档概述|研究问题|背景|目标|方法|主要内容|主要结果|实验结果|"
+    r"局限性|局限|结论|总结|来源|来源引用|参考资料|参考文献|references?)\s*[:：]?$",
+    re.IGNORECASE,
+)
+_SOURCE_LINE = re.compile(
+    r"^(?:来源|参考资料|参考文献|references?)\s*[:：]|"
+    r"^\[\d+\]\s*(?:https?://|[^。！？!?]{0,120}(?:p\.|第\s*\d+\s*页))",
+    re.IGNORECASE,
+)
+_TABLE_SEPARATOR = re.compile(r"^\|?(?:\s*:?-{3,}:?\s*\|)+\s*$")
 _META = re.compile(
     r"^(?:根据|依据|以上|综上|总之|下面|如下|参考|注[:：]|说明[:：]|"
     r"in summary|according to|based on|the following)",
@@ -84,27 +97,98 @@ def is_nonfactual_claim(text: str) -> bool:
     return bool(_NON_FACTUAL_CLAIM.search(_substantive_text(text)))
 
 
-def split_claims(answer: str, *, min_length: int = 8) -> list[str]:
+@dataclass(frozen=True, slots=True)
+class ClaimSpan:
+    """A factual claim and its approximate location in the original answer."""
+
+    text: str
+    start: int
+    end: int
+
+
+def _candidate_lines(answer: str) -> Iterable[tuple[str, int, int]]:
+    """Yield answer regions that may contain claims, excluding Markdown chrome."""
+    offset = 0
+    in_code_fence = False
+    in_sources = False
+    for raw_line in answer.splitlines(keepends=True):
+        line = raw_line.rstrip("\r\n")
+        stripped = line.strip()
+        start = offset
+        offset += len(raw_line)
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_code_fence = not in_code_fence
+            continue
+        if in_code_fence or not stripped:
+            continue
+        if _HEADING.match(line):
+            in_sources = bool(_SECTION_LABEL.fullmatch(_HEADING.sub("", line).strip())) and bool(
+                re.search(r"来源|参考|reference", line, re.IGNORECASE)
+            )
+            continue
+        if _SECTION_LABEL.fullmatch(stripped):
+            in_sources = bool(re.search(r"来源|参考|reference", stripped, re.IGNORECASE))
+            continue
+        if in_sources or _SOURCE_LINE.match(stripped) or _TABLE_SEPARATOR.match(stripped):
+            continue
+        # A Markdown table header is navigation, not a factual row. Keep later rows
+        # only when they contain sentence-like content; the separator itself was removed above.
+        if stripped.startswith("|") and stripped.endswith("|"):
+            cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+            if all(len(cell) < 12 and not re.search(r"[。！？!?]$", cell) for cell in cells):
+                continue
+            stripped = "；".join(cell for cell in cells if cell)
+        content_start = start + line.find(stripped)
+        yield stripped, content_start, content_start + len(stripped)
+
+
+def split_claim_spans(answer: str, *, min_length: int = 8) -> list[ClaimSpan]:
     """Split an answer into factual sentence-like claims.
 
-    Introductory/meta sentences, pure citation locators, and very short fragments
-    are excluded because treating them as claims inflates the unsupported rate.
+    Markdown headings, section labels, source lists, code fences, introductory/meta
+    sentences and very short fragments are excluded. Factual bullet items remain.
     """
-    claims: list[str] = []
-    for raw in _SENTENCE_SPLIT.split(answer.strip()):
-        candidate = _LIST_PREFIX.sub("", raw.strip())
-        if _CITATION.fullmatch(candidate) and claims:
-            claims[-1] = f"{claims[-1]} {candidate}"
-            continue
-        substantive = _substantive_text(candidate)
-        if not substantive or len(substantive) < min_length:
-            continue
-        if _META.match(substantive):
-            continue
-        if is_insufficient_claim(substantive) or is_nonfactual_claim(substantive):
-            continue
-        claims.append(candidate)
+    claims: list[ClaimSpan] = []
+    for region, region_start, _ in _candidate_lines(answer):
+        cursor = 0
+        for match in _SENTENCE_SPLIT.finditer(region + "\n"):
+            raw = region[cursor:match.start()]
+            raw_start = region_start + cursor
+            cursor = match.end()
+            stripped = raw.strip()
+            prefix_match = _LIST_PREFIX.match(stripped)
+            candidate = _LIST_PREFIX.sub("", stripped).strip()
+            candidate_start = raw_start + raw.find(stripped)
+            if prefix_match:
+                candidate_start += prefix_match.end()
+            if _CITATION.fullmatch(candidate) and claims:
+                previous = claims[-1]
+                claims[-1] = ClaimSpan(
+                    text=f"{previous.text} {candidate}",
+                    start=previous.start,
+                    end=candidate_start + len(candidate),
+                )
+                continue
+            substantive = _substantive_text(candidate)
+            if not substantive or len(substantive) < min_length:
+                continue
+            if _META.match(substantive):
+                continue
+            if is_insufficient_claim(substantive) or is_nonfactual_claim(substantive):
+                continue
+            claims.append(
+                ClaimSpan(
+                    text=candidate,
+                    start=candidate_start,
+                    end=candidate_start + len(candidate),
+                )
+            )
     return claims
+
+
+def split_claims(answer: str, *, min_length: int = 8) -> list[str]:
+    """Compatibility wrapper returning only claim text."""
+    return [span.text for span in split_claim_spans(answer, min_length=min_length)]
 
 
 def _tokens(text: str) -> set[str]:

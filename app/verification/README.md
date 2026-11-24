@@ -15,6 +15,10 @@ SemanticVerifier 与 LexicalVerifier 都实现冻结的 Verifier Protocol：
 
     def verify(self, answer: str, evidence: list[Evidence]) -> list[ClaimCheck]
 
+回答后补检索必须复用 `split_claims()` / `split_claim_spans()`，不要在 Agent
+编排层再维护第二套切句规则。`ClaimSpan` 同时提供原回答中的字符偏移，供 UI
+做正文内联标记。
+
 ## 4. 输入数据格式
 
 - answer：AnswerGenerator 生成的草稿答案。
@@ -23,6 +27,21 @@ SemanticVerifier 与 LexicalVerifier 都实现冻结的 Verifier Protocol：
 ## 5. 输出数据格式
 
 返回 app.core.types.ClaimCheck 列表。supporting_evidence 只包含输入 Evidence 中真实存在的 chunk_id，供 UI 定位文件和页码。
+
+Prompt、当前会话和长期记忆通过 `build_verification_context()` 建立独立的
+`VerificationContext` 契约。当前 `Verifier.verify()` 和 A 的 Orchestrator 尚未消费
+该对象，因此它是待接线能力，不应宣称已经参与端到端校验。接线后，这些来源只
+可以支持用户自述或偏好，且
+`academic_citation=False`，不能伪装成 PDF/Web Evidence 或显示为学术引用。冲突时
+优先级为：当前 Prompt > 最近会话 > 长期记忆。
+
+## 5.1 Claim 切分规则
+
+- Markdown 标题和纯小节标签不进入 Claim。
+- 事实性列表项保留，并去掉列表符号。
+- 来源/参考资料区、代码块、表格分隔线不进入 Claim。
+- “资料不足”、礼貌语、能力描述和运行状态不进入 Claim。
+- 引用编号会附着到前一条事实，便于后续定位证据。
 
 ## 6. 依赖的其他模块
 

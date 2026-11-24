@@ -15,6 +15,7 @@ from app.core.types import (
 from app.ui import (
     answer_panel_summary,
     claim_presentations,
+    delete_document_assets,
     document_status_presentation,
     inspect_pdf_text,
     memory_write_summary,
@@ -38,6 +39,40 @@ def test_safe_pdf_name_removes_paths_and_unsafe_characters() -> None:
 def test_safe_pdf_name_rejects_non_pdf() -> None:
     with pytest.raises(ValueError):
         safe_pdf_name("notes.txt")
+
+
+def test_delete_document_assets_removes_index_and_owned_pdf(tmp_path) -> None:
+    path = tmp_path / "paper.pdf"
+    path.write_bytes(b"pdf")
+
+    class Retriever:
+        def __init__(self) -> None:
+            self.deleted = []
+
+        def delete_document(self, file_name: str) -> bool:
+            self.deleted.append(file_name)
+            return True
+
+    retriever = Retriever()
+    result = delete_document_assets(retriever, "paper.pdf", tmp_path)
+
+    assert result == (True, True)
+    assert retriever.deleted == ["paper.pdf"]
+    assert not path.exists()
+
+
+def test_delete_document_assets_rejects_path_traversal(tmp_path) -> None:
+    class Retriever:
+        def delete_document(self, file_name: str) -> bool:
+            return False
+
+    outside = tmp_path.parent / "secret.pdf"
+    outside.write_bytes(b"keep")
+
+    assert delete_document_assets(
+        Retriever(), "../secret.pdf", tmp_path
+    ) == (False, False)
+    assert outside.exists()
 
 
 def test_pdf_page_count_handles_valid_and_invalid_files(tmp_path) -> None:

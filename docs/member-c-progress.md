@@ -1,10 +1,32 @@
 # Member C Progress
 
-更新日期：2026-11-23
+更新日期：2026-11-24
 
-当前开发分支：`docs/c-progress-pr100-merged`
+当前开发分支：`feat/c-claim-context-rules`
 
-基线提交：`origin/main@62a0203`（已包含 PR #95、#96、#98、#100、#102）
+基线提交：`origin/main@f65f415`（已包含 PR #104、#105、#106）
+
+## 2026-11-24 PDF 总结与 Claim 跟进
+
+- Review PR #107 并请求修改：当前回答后补检索跳过 Markdown 事实列表、只处理
+  前 5 句、缺少真正的文件范围检索，并且全文总结路径没有注入长期记忆。
+- Claim Splitter 已排除 Markdown 标题、小节标签、来源区、代码块和表格分隔线，
+  同时保留事实性列表项。
+- 新增 `ClaimSpan` 字符偏移；A 的回答后检索与 C 的正文标记应统一复用同一套
+  Claim 切分结果。
+- 新增独立 `VerificationContext` 契约，按当前 Prompt > 最近会话 > 长期记忆
+  排序；上下文来源明确不是学术引用，不修改冻结的 `Evidence` 公共结构。当前
+  `Verifier.verify()` 和 A 调用点尚未消费该契约，不能视为端到端已接线。
+- B 的 `delete_document()` 已接入右侧文档区；Real 模式删除前二次确认，同时清理
+  数据库索引、页缓存和 `data/raw` 中的上传 PDF。
+- UI 统一回答字号、行距、标题和表格宽度；来源区移除灰色长 quote，LLM 正文与
+  Claim Verification 使用虚线分隔，每条 Claim 可独立展开。
+- 设置与长期记忆移到右上角弹窗，右侧仅保留紧凑文档状态；保留左侧会话、新建、
+  重命名、清空和删除功能。用户问题会在运行阶段立即显示。
+- “聊天框加功能/上传后直接分析”暂缓：A 的 PR #107 尚未合并，完整 PDF 直读链路
+  未稳定前不改现有上传与提问流程。
+- 已 approve B 的 PR #109；其 `retrieve_for_claim()` 在 BM25 排序前和向量 SQL 中
+  应用文件范围，可供 A 的 PDF 总结回答后检索接入。
 
 ## 2026-11-22 冻结状态
 

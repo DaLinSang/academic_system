@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ from app.core.types import AgentState, ConversationTurn
 from app.ui.presenters import (
     answer_panel_summary,
     claim_presentations,
+    delete_document_assets,
     document_status_presentation,
     inspect_pdf_text,
     memory_write_summary,
@@ -54,6 +56,9 @@ _APP_CSS = """
   font-size: 15px;
 }
 [data-testid="stHeader"] { background: transparent; height: 2.25rem; }
+/* 自定义顶栏已提供运行入口；隐藏 Streamlit 的临时运行状态，避免它在
+   模型执行时覆盖“设置 / 长期记忆”按钮。 */
+[data-testid="stStatusWidget"] { display: none !important; }
 [data-testid="stToolbar"] { background: transparent; }
 [data-testid="stSidebar"] {
   background: var(--aa-sidebar);
@@ -108,10 +113,83 @@ h1, h2, h3 { letter-spacing: -0.025em; }
   padding: .65rem .2rem 1rem;
   margin-bottom: .35rem;
 }
-[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] p {
-  line-height: 1.68;
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] {
+  width: 100%;
+  max-width: 82ch;
   font-size: .96rem;
-  max-width: 78ch;
+  line-height: 1.62;
+}
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] :is(
+  p, li, td, th, blockquote, strong, em, code, span
+) {
+  font-size: .96rem !important;
+  line-height: 1.62 !important;
+}
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] :is(h1, h2, h3, h4, h5, h6) {
+  font-size: .96rem !important;
+  line-height: 1.62 !important;
+  margin: .7rem 0 .25rem !important;
+}
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] :is(ol, ul) {
+  margin-top: .3rem !important;
+  margin-bottom: .55rem !important;
+}
+[data-testid="stChatMessage"] [data-testid="stAlert"] :is(p, li, strong, span),
+[data-testid="stChatMessage"] [data-testid="stExpander"] :is(p, li, strong, span) {
+  font-size: .9rem !important;
+  line-height: 1.55 !important;
+}
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] table {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+[data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] :is(div, section, article) {
+  max-width: 100%;
+}
+.aa-claim-divider {
+  border: 0 !important;
+  border-top: 2px dashed var(--aa-border-strong) !important;
+  margin: 1rem 0 .75rem;
+  width: 100%;
+}
+.aa-claim-card {
+  border-left: 3px solid var(--aa-accent);
+  background: var(--aa-accent-soft);
+  border-radius: 6px;
+  padding: .55rem .7rem;
+  margin: .35rem 0;
+}
+.aa-document-row {
+  padding: .35rem 0 .45rem;
+  border-bottom: 1px solid var(--aa-border);
+}
+.aa-document-row p { margin: 0 !important; line-height: 1.35 !important; }
+[class*="st-key-top_actions"] {
+  position: fixed !important;
+  top: .35rem;
+  right: 12.5rem;
+  z-index: 1000000;
+  width: 15.2rem !important;
+}
+[class*="st-key-top_actions"] div[data-testid="stHorizontalBlock"] {
+  gap: .35rem !important;
+  align-items: center;
+}
+[class*="st-key-top_actions"] button {
+  min-height: 2.15rem !important;
+  height: 2.15rem !important;
+  padding: .2rem .65rem !important;
+  background: var(--aa-panel) !important;
+  color: var(--aa-text) !important;
+  border: 1px solid var(--aa-border-strong) !important;
+  box-shadow: 0 1px 4px var(--aa-shadow);
+}
+[class*="st-key-top_actions"] button:hover {
+  background: var(--aa-accent-soft) !important;
+  border-color: var(--aa-accent) !important;
 }
 [data-testid="stChatMessageAvatarUser"],
 [data-testid="stChatMessageAvatarAssistant"] {
@@ -252,6 +330,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   }
   div[data-testid="stHorizontalBlock"]:has(.right-rail-marker)
   > div[data-testid="stColumn"] { width: 100% !important; }
+  [class*="st-key-top_actions"] {
+    right: 10.5rem;
+    width: 13.5rem !important;
+  }
 }
 </style>
 """
@@ -261,6 +343,38 @@ def _sync_mode_flags() -> None:
     preset = MODE_PRESETS[st.session_state.evaluation_mode]
     st.session_state.enable_memory = preset["enable_memory"]
     st.session_state.enable_verification = preset["enable_verification"]
+
+
+_DIALOG_SETTING_KEYS = {
+    "_settings_user_id": "user_id",
+    "_settings_runtime": "runtime",
+    "_settings_evaluation_mode": "evaluation_mode",
+    "_settings_top_k": "top_k",
+    "_settings_enable_memory": "enable_memory",
+    "_settings_enable_verification": "enable_verification",
+}
+
+
+def _prepare_settings_dialog() -> None:
+    """Copy persistent configuration into temporary dialog widget keys."""
+    for widget_key, setting_key in _DIALOG_SETTING_KEYS.items():
+        st.session_state[widget_key] = st.session_state[setting_key]
+
+
+def _persist_settings_dialog() -> None:
+    """Keep settings after Streamlit removes closed-dialog widget state."""
+    for widget_key, setting_key in _DIALOG_SETTING_KEYS.items():
+        if widget_key in st.session_state:
+            st.session_state[setting_key] = st.session_state[widget_key]
+
+
+def _persist_dialog_mode() -> None:
+    _persist_settings_dialog()
+    _sync_mode_flags()
+    st.session_state._settings_enable_memory = st.session_state.enable_memory
+    st.session_state._settings_enable_verification = (
+        st.session_state.enable_verification
+    )
 
 
 def _build_orchestrator(runtime: str, top_k: int):
@@ -284,6 +398,13 @@ def _render_claims(state: AgentState) -> None:
             getattr(st, notice[0])(notice[1])
         return
     for row in claim_presentations(state):
+        display_claim = (
+            row["claim"]
+            .replace("**", "")
+            .replace("__", "")
+            .replace("`", "")
+            .strip()
+        )
         source_text = "；".join(
             f"[{source['locator']}]({source['url']})"
             if source["is_web"] and source["url"]
@@ -295,14 +416,44 @@ def _render_claims(state: AgentState) -> None:
             detail += f" · 证据：{source_text}"
         if row["note"]:
             detail += f" · {row['note']}"
-        message = f"**{row['label']}** · {row['claim']}\n\n{detail}"
-        getattr(st, row["level"])(message)
+        title = f"{row['label']} · {display_claim[:72]}"
+        if len(display_claim) > 72:
+            title += "…"
+        with st.expander(title, expanded=False):
+            with st.container(border=True):
+                st.markdown(display_claim)
+                st.caption(detail)
+
+
+def _split_answer_sections(answer: str) -> tuple[str, str]:
+    """Split the model's normal answer from claim/verification feedback.
+
+    Some generators include a final ``缺少证据的部分`` block in the draft, while
+    the orchestrator may append verifier warnings afterwards.  They are both
+    verification feedback in the UI and should appear below the claim divider.
+    """
+    markers = (
+        r"(?m)^(?:\d+\.\s*)?(?:\*\*)?(?:缺少证据的部分|缺少的信息)"
+        r"(?:\*\*)?\s*(?:[：:]|$)",
+        r"(?m)^⚠️ 以下内容与已检索证据不一致或缺少支持",
+        r"(?m)^ℹ️ 以下内容现有证据不足",
+        r"(?m)^ℹ️ 以下内容仅有部分证据支持",
+    )
+    starts = [match.start() for pattern in markers if (match := re.search(pattern, answer))]
+    if not starts:
+        return answer.strip(), ""
+    start = min(starts)
+    return answer[:start].rstrip(), answer[start:].lstrip()
 
 
 def _render_state(
     state: AgentState, *, uploaded_documents: int, indexed_documents: int | None
 ) -> None:
-    st.markdown(state.final_answer)
+    answer_body, claim_feedback = _split_answer_sections(state.final_answer)
+    st.markdown(answer_body)
+    st.markdown('<hr class="aa-claim-divider">', unsafe_allow_html=True)
+    if claim_feedback:
+        st.markdown(claim_feedback)
     citations = used_citations(state)
     summary = answer_panel_summary(state)
     if summary["unsupported"]:
@@ -330,8 +481,6 @@ def _render_state(
                         f"**[{citation['index']}] {citation['file_name']} "
                         f"第 {citation['page_number']} 页**"
                     )
-                if citation["quote"]:
-                    st.caption(citation["quote"])
     with st.expander(
         f"Claim Verification · {summary['claims']} 条"
         + (f" · {summary['unsupported']} 条需注意" if summary["unsupported"] else ""),
@@ -345,7 +494,6 @@ def _render_state(
     ):
         if state.route:
             st.write("Router:", state.route.route.value, "-", state.route.reason)
-        st.caption(f"用户：{state.user_id} · 会话：{state.session_id} · 轮次：{state.turn_index}")
         source_level, source_message = source_status(
             state,
             uploaded_documents=uploaded_documents,
@@ -486,7 +634,10 @@ def _render_upload(orch: Any, runtime: str) -> None:
 
 
 def _render_documents(
-    persisted: dict[str, dict[str, Any]], index_error: str | None
+    orch: Any,
+    runtime: str,
+    persisted: dict[str, dict[str, Any]],
+    index_error: str | None,
 ) -> None:
     statuses = _document_statuses()
     paths = {
@@ -506,10 +657,40 @@ def _render_documents(
                 persisted=persisted.get(name),
             )
             icon = "✓" if row["level"] == "success" else "!" if row["level"] == "error" else "•"
-            st.markdown(f"**{icon} {name}**")
-            st.caption(row["label"])
-            if row["detail"]:
-                st.caption(row["detail"])
+            st.markdown(
+                f'<div class="aa-document-row"><strong>{icon} {name}</strong><br>'
+                f'<span class="aa-muted">{row["label"]}</span></div>',
+                unsafe_allow_html=True,
+            )
+            if runtime == "Real":
+                with st.popover(
+                    "文档操作",
+                    icon=":material/more_horiz:",
+                    key=f"document-actions-{name}",
+                    use_container_width=True,
+                ):
+                    st.warning("删除会同时移除数据库索引和上传的 PDF 原文件。")
+                    confirmed = st.checkbox(
+                        "确认删除", key=f"document-delete-confirm-{name}"
+                    )
+                    if st.button(
+                        "删除文档",
+                        key=f"document-delete-{name}",
+                        disabled=not confirmed,
+                        use_container_width=True,
+                    ):
+                        try:
+                            index_deleted, file_deleted = delete_document_assets(
+                                orch.retriever, name, settings.runtime.data_raw_dir
+                            )
+                            statuses.pop(name, None)
+                            if index_deleted or file_deleted:
+                                st.success("文档及其可用数据已删除。")
+                            else:
+                                st.info("未找到可删除的文档数据。")
+                            st.rerun()
+                        except Exception as exc:  # noqa: BLE001
+                            st.error(f"删除失败：{type(exc).__name__}: {exc}")
     else:
         st.caption("尚未上传 PDF。")
 
@@ -521,7 +702,6 @@ def _render_memories(
     enabled: bool,
     latest_state: AgentState | None,
 ) -> None:
-    st.caption(f"用户：{user_id} · 会话：{session_id}")
     if not enabled:
         st.info("当前已关闭长期记忆；本轮不会读取或保存。")
         return
@@ -682,12 +862,12 @@ def _render_session_actions(
 
 def _render_session_sidebar(
     store: SessionStore,
-) -> tuple[str, str, str, str, int, bool, bool]:
+) -> tuple[str, str]:
     """Render a scan-friendly, user-isolated conversation list."""
     with st.sidebar:
         st.markdown('<div class="aa-kicker">ACADEMIC RESEARCH</div>', unsafe_allow_html=True)
         st.subheader("会话")
-        user_id = st.text_input("用户 ID", key="user_id").strip()
+        user_id = str(st.session_state.user_id).strip()
         try:
             sessions = store.list_sessions(user_id)
         except ValueError as exc:
@@ -738,32 +918,55 @@ def _render_session_sidebar(
                     )
 
         session_id = current
-        with st.expander("设置", expanded=False):
-            runtime = st.radio(
-                "运行链路", ["Mock", "Real"], horizontal=True, key="runtime"
-            )
-            mode = st.selectbox(
-                "评测模式",
-                sorted(MODE_PRESETS),
-                key="evaluation_mode",
-                on_change=_sync_mode_flags,
-            )
-            top_k = st.slider("检索 Top-K", 1, 10, 5)
-            enable_memory = st.checkbox("长期记忆", key="enable_memory")
-            enable_verification = st.checkbox(
-                "Claim Verification", key="enable_verification"
-            )
-            st.caption("Real 使用 .env 模型；Mock 无需 API 或数据库。")
-        st.caption("共享文档库 · 会话按用户隔离")
-    return (
-        user_id,
-        session_id,
-        runtime,
-        mode,
-        top_k,
-        enable_memory,
-        enable_verification,
+    return user_id, session_id
+
+
+@st.dialog("设置")
+def _settings_dialog() -> None:
+    st.text_input(
+        "用户 ID", key="_settings_user_id", on_change=_persist_settings_dialog
     )
+    st.radio(
+        "运行链路",
+        ["Mock", "Real"],
+        horizontal=True,
+        key="_settings_runtime",
+        on_change=_persist_settings_dialog,
+    )
+    st.selectbox(
+        "评测模式",
+        sorted(MODE_PRESETS),
+        key="_settings_evaluation_mode",
+        on_change=_persist_dialog_mode,
+    )
+    st.slider(
+        "检索 Top-K",
+        1,
+        10,
+        key="_settings_top_k",
+        on_change=_persist_settings_dialog,
+    )
+    st.checkbox(
+        "长期记忆",
+        key="_settings_enable_memory",
+        on_change=_persist_settings_dialog,
+    )
+    st.checkbox(
+        "Claim Verification",
+        key="_settings_enable_verification",
+        on_change=_persist_settings_dialog,
+    )
+
+
+@st.dialog("长期记忆", width="large")
+def _memory_dialog(
+    orch: Any,
+    user_id: str,
+    session_id: str,
+    enabled: bool,
+    latest_state: AgentState | None,
+) -> None:
+    _render_memories(orch, user_id, session_id, enabled, latest_state)
 
 
 def main() -> None:
@@ -773,6 +976,7 @@ def main() -> None:
         st.session_state.evaluation_mode = "B4"
         _sync_mode_flags()
     st.session_state.setdefault("runtime", "Mock")
+    st.session_state.setdefault("top_k", 5)
     st.session_state.setdefault("inspector_open", True)
 
     store = _session_store()
@@ -781,15 +985,12 @@ def main() -> None:
     pending = st.session_state.pop("pending_session_id", None)
     if pending:
         st.session_state.session_selector = pending
-    (
-        user_id,
-        session_id,
-        runtime,
-        mode,
-        top_k,
-        enable_memory,
-        enable_verification,
-    ) = _render_session_sidebar(store)
+    user_id, session_id = _render_session_sidebar(store)
+    runtime = st.session_state.runtime
+    mode = st.session_state.evaluation_mode
+    top_k = int(st.session_state.top_k)
+    enable_memory = bool(st.session_state.enable_memory)
+    enable_verification = bool(st.session_state.enable_verification)
 
     orch = _get_orchestrator(runtime, top_k)
     if st.session_state.get("loaded_session") != (user_id, session_id):
@@ -805,12 +1006,29 @@ def main() -> None:
         [3.75, 1.15] if inspector_open else [4.7, 0.65], gap="large"
     )
 
+    latest_state = (
+        st.session_state.history[-1]["state"]
+        if st.session_state.history
+        else None
+    )
+    with st.container(key="top_actions"):
+        settings_col, memory_col = st.columns([1, 1.25], gap="small")
+        with settings_col:
+            if st.button("设置", icon=":material/settings:", use_container_width=True):
+                _prepare_settings_dialog()
+                _settings_dialog()
+        with memory_col:
+            if st.button(
+                "长期记忆", icon=":material/memory:", use_container_width=True
+            ):
+                _memory_dialog(
+                    orch, user_id, session_id, enable_memory, latest_state
+                )
+
     with chat_col:
         st.markdown(
             '<section class="aa-hero">'
-            '<div class="aa-hero-kicker">Evidence-grounded research assistant</div>'
             '<h1>Agentic Academic Assistant</h1>'
-            '<p>面向课程讲义与研究文献的检索、引用、记忆与 Claim Verification</p>'
             '</section>',
             unsafe_allow_html=True,
         )
@@ -824,47 +1042,51 @@ def main() -> None:
                     indexed_documents=indexed_documents,
                 )
 
-        upload_col, input_hint_col = st.columns([1, 5])
+        pending_turn = st.container()
+        upload_col, _ = st.columns([1, 5])
         with upload_col:
             with st.popover("＋ 上传 PDF", use_container_width=True):
                 _render_upload(orch, runtime)
-        with input_hint_col:
-            st.caption("上传后可直接提问；失败时旧索引状态会继续保留。")
         question = st.chat_input("请输入文档问题、论文比较或研究任务")
         if question:
             flags = dict(MODE_PRESETS[mode])
             flags["enable_memory"] = enable_memory
             flags["enable_verification"] = enable_verification
             try:
-                with st.status(
-                    "Agent 正在执行路由、检索、生成与校验...", expanded=True
-                ) as run_status:
-                    st.write("仅展示可核对的执行阶段，不展示模型内部思考。")
-                    # Issue #44：把此前轮次作为结构化历史传入，模型才能理解
-                    # "它/这个"等指代。只带 question 与最终 answer，不带完整 state。
-                    turns = [
-                        ConversationTurn(
-                            question=item["question"],
-                            answer=item["state"].final_answer,
-                            turn_index=idx,
+                with pending_turn:
+                    with st.chat_message("user"):
+                        st.markdown(question)
+                    with st.status(
+                        "Agent 正在执行路由、检索、生成与校验...", expanded=True
+                    ) as run_status:
+                        st.write("仅展示可核对的执行阶段，不展示模型内部思考。")
+                        # Issue #44：把此前轮次作为结构化历史传入，模型才能理解
+                        # "它/这个"等指代。只带 question 与最终 answer，不带完整 state。
+                        turns = [
+                            ConversationTurn(
+                                question=item["question"],
+                                answer=item["state"].final_answer,
+                                turn_index=idx,
+                            )
+                            for idx, item in enumerate(st.session_state.history)
+                        ]
+                        state = orch.run(
+                            question,
+                            session_id=session_id,
+                            user_id=user_id,
+                            turn_index=len(turns),
+                            history=turns,
+                            **flags,
                         )
-                        for idx, item in enumerate(st.session_state.history)
-                    ]
-                    state = orch.run(
-                        question,
-                        session_id=session_id,
-                        user_id=user_id,
-                        turn_index=len(turns),
-                        history=turns,
-                        **flags,
-                    )
-                    run_status.write(
-                        f"完成：取得 {len(state.evidence)} 条证据，"
-                        f"生成 {len(state.claims)} 条 claim 校验结果。"
-                    )
-                    run_status.update(
-                        label="Agent 处理完成", state="complete", expanded=False
-                    )
+                        run_status.write(
+                            f"完成：取得 {len(state.evidence)} 条证据，"
+                            f"生成 {len(state.claims)} 条 claim 校验结果。"
+                        )
+                        run_status.update(
+                            label="Agent 处理完成",
+                            state="complete",
+                            expanded=False,
+                        )
                 st.session_state.history.append({"question": question, "state": state})
                 store.append(state, user_id=user_id, session_id=session_id)
                 st.rerun()
@@ -877,14 +1099,13 @@ def main() -> None:
             rail_title, rail_toggle = st.columns([3.8, 1.5], gap="small")
             with rail_title:
                 st.markdown(
-                    '<div class="aa-rail-header"><div class="aa-rail-title">资料与记忆</div>'
-                    '<div class="aa-rail-subtitle">固定在右侧，可独立展开</div></div>',
+                    '<div class="aa-rail-header"><div class="aa-rail-title">文档资料</div></div>',
                     unsafe_allow_html=True,
                 )
             if rail_toggle.button(
                 "×",
                 key="inspector-close",
-                help="收起资料与记忆",
+                help="收起文档资料",
                 use_container_width=True,
             ):
                 st.session_state.inspector_open = False
@@ -892,20 +1113,13 @@ def main() -> None:
             with st.expander(
                 f"文档状态 · {uploaded_documents} 个文件", expanded=True
             ):
-                _render_documents(persisted_indexes, index_status_error)
-            latest_state = (
-                st.session_state.history[-1]["state"]
-                if st.session_state.history
-                else None
-            )
-            with st.expander("长期记忆", expanded=False):
-                _render_memories(
-                    orch, user_id, session_id, enable_memory, latest_state
+                _render_documents(
+                    orch, runtime, persisted_indexes, index_status_error
                 )
         elif st.button(
             "展开",
             key="inspector-open",
-            help="展开资料与记忆",
+            help="展开文档资料",
             use_container_width=True,
         ):
             st.session_state.inspector_open = True

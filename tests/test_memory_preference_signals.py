@@ -31,6 +31,7 @@ from app.memory.manager import _SYSTEM_PROMPT
         "我正在写 RAG 报告，实验部分还没有完成，请记住。",
         "我是港大 COMP7608B 的学生",
         "请记住我的偏好",
+        "请你以后在回答我时先说你好请把这个作为长期记忆",
         "From now on, always respond in English",
         "Before answering, tell me whether you used my documents",
     ],
