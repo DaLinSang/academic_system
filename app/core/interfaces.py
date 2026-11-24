@@ -81,6 +81,14 @@ class Retriever(Protocol):
         """导入一篇 PDF，返回切分出的 chunk 数量。"""
         ...
 
+    def read_document(self, file_name: str) -> str:
+        """读取已索引 PDF 的按页清理全文，用于单篇总结。"""
+        ...
+
+    def delete_document(self, file_name: str) -> bool:
+        """删除指定 PDF 的 chunks、全文页缓存和向量索引。"""
+        ...
+
 
 @runtime_checkable
 class MemoryStore(Protocol):

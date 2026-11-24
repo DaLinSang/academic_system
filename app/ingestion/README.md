@@ -45,7 +45,7 @@ which pdftoppm tesseract
 tesseract --list-langs
 ```
 
-默认识别英语（`eng`）。若 PDF 中有中文，需另外安装 Tesseract 的中文语言数据，并在运行索引前设 `PDF_OCR_LANG=eng+chi_sim`；语言包名称以 `tesseract --list-langs` 实际输出为准。已有索引不会自动更新，安装 OCR 后要重新执行 `uv run python scripts/index_pdfs.py`。OCR 文字可能错字，公式、表格和复杂双栏排版尤其需要人工核对引用页面。当前机器没有安装 Tesseract，因此本 PR 自动测试只验证 OCR 调用路径与页码保留，尚未做真实扫描 PDF 的端到端识别测试。
+默认识别英语（`eng`）。若 PDF 中有中文，需另外安装 Tesseract 的中文语言数据，并在运行索引前设 `PDF_OCR_LANG=eng+chi_sim`；语言包名称以 `tesseract --list-langs` 实际输出为准。已有索引不会自动更新，安装 OCR 后要重新执行 `uv run python scripts/index_pdfs.py`。OCR 文字可能错字，公式、表格和复杂双栏排版尤其需要人工核对引用页面。英文扫描页曾完成 OCR → 索引 → 检索 → p.1 引用的单例验收，记录见下方链接；中文扫描件与复杂版式仍需分别验收。每台演示电脑都必须单独安装并检查系统工具。
 
 ## 验证
 
