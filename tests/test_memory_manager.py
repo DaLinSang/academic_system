@@ -358,3 +358,34 @@ def test_orchestrator_logs_memory_funnel():
     assert stats, "必须留下记忆漏斗事件"
     assert stats[0].detail["proposed"] == 2
     assert state.usage.total_tokens >= 64, "记忆抽取消耗的 token 也要计入"
+
+
+def test_orchestrator_corrects_false_memory_save_claim_after_write():
+    """最终回答必须以真实写入结果为准，不能只相信模型的口头承诺。"""
+    mgr = LLMMemoryManager(FakeLLM("[]"))
+    answer_llm = MockLLM("好的，我已将这项回答偏好记录为长期记忆。")
+    orch = build_orchestrator(
+        router=RuleBasedRouter(),
+        planner=MockPlanner(),
+        retriever=MockRetriever(),
+        memory_store=MockMemoryStore(),
+        memory_manager=mgr,
+        verifier=MockVerifier(),
+        answer_generator=MockAnswerGenerator(answer_llm),
+        llm=answer_llm,
+    )
+
+    state = orch.run(
+        "请你以后在回答我时先说你好请把这个作为长期记忆",
+        enable_retrieval=False,
+        enable_verification=False,
+    )
+
+    assert mgr.last_stats["proposed"] == 0
+    assert "实际未保存" in state.final_answer
+    assert any(
+        event.stage == "memory_write"
+        and event.event == "end"
+        and event.detail["stored"] == 0
+        for event in state.trace
+    )

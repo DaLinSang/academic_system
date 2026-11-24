@@ -142,6 +142,21 @@ def test_claimed_saved_but_stored_zero_adds_correction():
     assert "parse_error" in note
 
 
+def test_claimed_recorded_with_inserted_object_still_adds_correction():
+    state = AgentState(
+        question=QUESTION,
+        draft_answer="好的，我已将这项回答偏好记录为长期记忆。",
+    )
+    state.trace.append(TraceEvent(
+        stage="memory_write", event="end", detail={"stored": 0}
+    ))
+    state.trace.append(TraceEvent(
+        stage="memory_write", event="stats", detail={"skipped": "no_signal"}
+    ))
+
+    assert "实际未保存" in Orchestrator._memory_write_note(state)
+
+
 def test_successful_write_adds_no_correction():
     state = AgentState(question=QUESTION, draft_answer="好的，已记录。")
     state.trace.append(TraceEvent(

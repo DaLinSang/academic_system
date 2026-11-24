@@ -55,6 +55,9 @@ _APP_CSS = """
   font-size: 15px;
 }
 [data-testid="stHeader"] { background: transparent; height: 2.25rem; }
+/* 自定义顶栏已提供运行入口；隐藏 Streamlit 的临时运行状态，避免它在
+   模型执行时覆盖“设置 / 长期记忆”按钮。 */
+[data-testid="stStatusWidget"] { display: none !important; }
 [data-testid="stToolbar"] { background: transparent; }
 [data-testid="stSidebar"] {
   background: var(--aa-sidebar);
@@ -166,7 +169,7 @@ h1, h2, h3 { letter-spacing: -0.025em; }
 [class*="st-key-top_actions"] {
   position: fixed !important;
   top: .35rem;
-  right: 8.2rem;
+  right: 12.5rem;
   z-index: 1000000;
   width: 15.2rem !important;
 }
@@ -327,7 +330,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   div[data-testid="stHorizontalBlock"]:has(.right-rail-marker)
   > div[data-testid="stColumn"] { width: 100% !important; }
   [class*="st-key-top_actions"] {
-    right: 6.5rem;
+    right: 10.5rem;
     width: 13.5rem !important;
   }
 }
@@ -1014,47 +1017,51 @@ def main() -> None:
                     indexed_documents=indexed_documents,
                 )
 
+        pending_turn = st.container()
         upload_col, _ = st.columns([1, 5])
         with upload_col:
             with st.popover("＋ 上传 PDF", use_container_width=True):
                 _render_upload(orch, runtime)
         question = st.chat_input("请输入文档问题、论文比较或研究任务")
         if question:
-            with st.chat_message("user"):
-                st.markdown(question)
             flags = dict(MODE_PRESETS[mode])
             flags["enable_memory"] = enable_memory
             flags["enable_verification"] = enable_verification
             try:
-                with st.status(
-                    "Agent 正在执行路由、检索、生成与校验...", expanded=True
-                ) as run_status:
-                    st.write("仅展示可核对的执行阶段，不展示模型内部思考。")
-                    # Issue #44：把此前轮次作为结构化历史传入，模型才能理解
-                    # "它/这个"等指代。只带 question 与最终 answer，不带完整 state。
-                    turns = [
-                        ConversationTurn(
-                            question=item["question"],
-                            answer=item["state"].final_answer,
-                            turn_index=idx,
+                with pending_turn:
+                    with st.chat_message("user"):
+                        st.markdown(question)
+                    with st.status(
+                        "Agent 正在执行路由、检索、生成与校验...", expanded=True
+                    ) as run_status:
+                        st.write("仅展示可核对的执行阶段，不展示模型内部思考。")
+                        # Issue #44：把此前轮次作为结构化历史传入，模型才能理解
+                        # "它/这个"等指代。只带 question 与最终 answer，不带完整 state。
+                        turns = [
+                            ConversationTurn(
+                                question=item["question"],
+                                answer=item["state"].final_answer,
+                                turn_index=idx,
+                            )
+                            for idx, item in enumerate(st.session_state.history)
+                        ]
+                        state = orch.run(
+                            question,
+                            session_id=session_id,
+                            user_id=user_id,
+                            turn_index=len(turns),
+                            history=turns,
+                            **flags,
                         )
-                        for idx, item in enumerate(st.session_state.history)
-                    ]
-                    state = orch.run(
-                        question,
-                        session_id=session_id,
-                        user_id=user_id,
-                        turn_index=len(turns),
-                        history=turns,
-                        **flags,
-                    )
-                    run_status.write(
-                        f"完成：取得 {len(state.evidence)} 条证据，"
-                        f"生成 {len(state.claims)} 条 claim 校验结果。"
-                    )
-                    run_status.update(
-                        label="Agent 处理完成", state="complete", expanded=False
-                    )
+                        run_status.write(
+                            f"完成：取得 {len(state.evidence)} 条证据，"
+                            f"生成 {len(state.claims)} 条 claim 校验结果。"
+                        )
+                        run_status.update(
+                            label="Agent 处理完成",
+                            state="complete",
+                            expanded=False,
+                        )
                 st.session_state.history.append({"question": question, "state": state})
                 store.append(state, user_id=user_id, session_id=session_id)
                 st.rerun()

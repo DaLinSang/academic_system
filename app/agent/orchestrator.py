@@ -233,6 +233,9 @@ class Orchestrator:
         # 8) 写回记忆
         if enable_memory:
             self._write_memory(state)
+            # 写入结果产生后重新组装一次，确保模型口头承诺保存但实际 stored=0
+            # 时，_memory_write_note() 能把事实纠正展示给用户。
+            state.final_answer = self._compose_final(state)
 
         state.usage = state.usage.add(
             Usage(latency_ms=round((time.perf_counter() - t_total) * 1000, 2))
@@ -835,7 +838,10 @@ class Orchestrator:
             return ""
         answer = state.draft_answer or ""
         # 只有模型确实承诺了保存才需要纠正
-        claimed = any(w in answer for w in ("已记录", "已保存", "已经记住", "记住了"))
+        claimed = any(
+            w in answer
+            for w in ("已记录", "已保存", "已经记住", "记住了")
+        ) or bool(re.search(r"已(?:经)?(?:将|把)?.{0,40}(?:记录|保存|记住)", answer))
         if not claimed:
             return ""
         end = next(
