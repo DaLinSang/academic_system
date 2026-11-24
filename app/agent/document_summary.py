@@ -81,9 +81,22 @@ def summarize_document(
         return ""
     file_name = state.document_file_name or "文档"
 
+    # C review：全文总结也要带上用户记忆/偏好（如"偏好中文""结论附页码"），
+    # 否则 AgentState 注入在这些路径上实际是断的。
+    memory_hint = ""
+    if state.memory_context:
+        lines = [f"- {m.content}" for m in state.memory_context[:8]]
+        memory_hint = (
+            "\n\n用户长期偏好（仅用于调整表达形式，不能当作文档事实）：\n"
+            + "\n".join(lines)
+        )
+
     if len(text) <= small_doc_chars:
         state.log("document_summary", "mode", mode="full", chars=len(text))
-        return _summarize_once(llm, state, text, file_name, _SYSTEM_PROMPT + "\n" + _STRUCTURE_HINT)
+        return _summarize_once(
+            llm, state, text + memory_hint, file_name,
+            _SYSTEM_PROMPT + "\n" + _STRUCTURE_HINT,
+        )
 
     segments = split_pages_into_segments(text, max_chars=segment_chars)
     state.log(
@@ -108,7 +121,10 @@ def summarize_document(
         "避免重复，保留可定位的页码信息，只输出正文。\n\n" + merged
         + f"\n\n用户问题：{state.question}"
     )
-    return _summarize_once(llm, state, final_prompt, file_name, _SYSTEM_PROMPT + "\n" + _STRUCTURE_HINT)
+    return _summarize_once(
+        llm, state, final_prompt + memory_hint, file_name,
+        _SYSTEM_PROMPT + "\n" + _STRUCTURE_HINT,
+    )
 
 
 def _summarize_once(llm: LLM, state: AgentState, prompt: str, file_name: str, system: str) -> str:

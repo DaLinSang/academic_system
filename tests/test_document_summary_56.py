@@ -35,8 +35,39 @@ def test_intent_qa_not_summarized():
 def test_intent_comparison_not_summarized():
     q = "比较 A.pdf 和 B.pdf 的方法"
     assert document_task(q) == "comparison"
-    assert requested_document(q, ["A.pdf", "B.pdf"]) is None
+    # 多份文件无法唯一确定 → AMBIGUOUS；comparison 不走单篇总结
+    from app.agent.document_intent import AMBIGUOUS
+    assert requested_document(q, ["A.pdf", "B.pdf"]) == AMBIGUOUS
     assert not should_summarize(q, ["A.pdf", "B.pdf"])
+
+
+# --------------------------------------------------------------------------- #
+# 方案 §4.3/§4.4：当前会话文档与"这个文档"指代
+# --------------------------------------------------------------------------- #
+def test_deictic_uses_active_document():
+    from app.agent.document_intent import requested_document
+    q = "请总结这个文档"
+    assert requested_document(q, ["a.pdf", "b.pdf", "c.pdf"], "rag_paper.pdf") == "rag_paper.pdf"
+    assert should_summarize(q, ["a.pdf", "b.pdf"], "rag_paper.pdf")
+
+
+def test_deictic_ambiguous_without_active_and_many_files():
+    from app.agent.document_intent import AMBIGUOUS, requested_document
+    assert requested_document("总结这个文档", ["a.pdf", "b.pdf"], None) == AMBIGUOUS
+    assert not should_summarize("总结这个文档", ["a.pdf", "b.pdf"], None)
+
+
+def test_explicit_filename_beats_active_document():
+    from app.agent.document_intent import requested_document
+    assert requested_document("总结 rag_paper.pdf", ["rag_paper.pdf", "x.pdf"], "x.pdf") == "rag_paper.pdf"
+
+
+def test_agentstate_has_active_document_field():
+    from app.core.types import AgentState
+    s = AgentState(question="q")
+    assert s.active_document_file_name is None
+    s.active_document_file_name = "rag_paper.pdf"
+    assert s.active_document_file_name == "rag_paper.pdf"
 
 
 def test_intent_single_indexed_file_inferred():
@@ -111,3 +142,71 @@ def test_summary_prompt_forbids_source_list():
     system = llm.prompts[0][0]["content"]
     assert "不要输出来源列表" in system
     assert "不要编造页码" in system or "无法定位时不要编造页码" in system
+
+
+# --------------------------------------------------------------------------- #
+# C review #1/#2/#3：逐条 scoped 检索 + unverified，不用全库过滤冒充
+# --------------------------------------------------------------------------- #
+def test_per_claim_scoped_retrieval_and_unverified():
+    """超过预算的 Claim 必须标 unverified，不能 unsupported；证据只来自目标 PDF。"""
+    from app.agent.orchestrator import Orchestrator
+    from app.core.types import AgentState, ClaimStatus, Evidence, RetrievalMethod
+
+    class FakeScopedRetriever:
+        def retrieve_for_claim(self, claim, file_names, top_k=3):
+            assert file_names == ["target.pdf"], "必须按目标文件 scoped 检索"
+            return [Evidence(
+                chunk_id=f"c-{claim[:6]}", document_id="d", file_name="target.pdf",
+                page_number=1, text="evidence", score=0.9,
+                retrieval_method=RetrievalMethod.RRF,
+            )]
+
+    class FakeVerifier:
+        last_usage = None
+        def verify(self, answer, evidence):
+            from app.core.types import ClaimCheck
+            return [ClaimCheck(claim=answer, status=ClaimStatus.SUPPORTED,
+                               supporting_evidence=[e.chunk_id for e in evidence])]
+
+    orch = Orchestrator(
+        llm=None, router=None, planner=None, retriever=FakeScopedRetriever(),
+        memory_store=None, memory_manager=None, verifier=FakeVerifier(),
+        answer_generator=None,
+    )
+    # 造 12 条可被 split_claims 识别的事实句
+    answer = "\n".join(f"第{i}条陈述包含足够长度的中文事实内容用于拆分。" for i in range(12))
+    state = AgentState(question="总结 target.pdf", document_text="全文", document_file_name="target.pdf")
+    state.draft_answer = answer
+
+    done = orch._supplement_evidence_for_summary(state)
+    assert done is True
+    assert len(state.claims) == 12
+    verified = [c for c in state.claims if c.status != ClaimStatus.UNVERIFIED]
+    unverified = [c for c in state.claims if c.status == ClaimStatus.UNVERIFIED]
+    assert len(verified) == orch.MAX_VERIFIED_CLAIMS
+    assert len(unverified) == 12 - orch.MAX_VERIFIED_CLAIMS
+    assert all(c.note for c in unverified), "unverified 必须带原因"
+    assert all(
+        e.file_name == "target.pdf" for e in state.evidence
+    ), "证据必须全部来自目标 PDF"
+    assert any(e.stage == "post_hoc_retrieval" and e.event == "end" for e in state.trace)
+
+
+def test_no_scoped_retriever_degrades_without_fake_evidence():
+    """没有 retrieve_for_claim 时不做全库检索兜底，直接降级 unverified。"""
+    from app.agent.orchestrator import Orchestrator
+    from app.core.types import AgentState
+
+    class NoScopedRetriever:
+        def retrieve(self, query, top_k=5):
+            raise AssertionError("C review #3：不能拿全库检索冒充 scoped")
+
+    orch = Orchestrator(
+        llm=None, router=None, planner=None, retriever=NoScopedRetriever(),
+        memory_store=None, memory_manager=None, verifier=None, answer_generator=None,
+    )
+    state = AgentState(question="总结 x.pdf", document_text="全文", document_file_name="x.pdf")
+    state.draft_answer = "这是一条足够长的中文事实陈述内容用于拆分。"
+    assert orch._supplement_evidence_for_summary(state) is False
+    assert any(e.stage == "post_hoc_retrieval" and e.detail.get("reason") == "no_scoped_retriever"
+               for e in state.trace)

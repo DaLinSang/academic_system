@@ -15,6 +15,7 @@
 
 ### Added
 
+- `AgentState.active_document_file_name` + Orchestrator.run 参数：支持"总结这个文档"指代，多 PDF 要求选择（方案 §4.3/§4.4）
 - `app/agent/document_summary.py` / `document_intent.py`：PDF 分层总结与 summary/qa/comparison 意图识别（方案 §3/§8.1）
 - 测试 `tests/test_document_summary_56.py`（10 项）：意图、分段、分层总结、usage、prompt 约束
 - `scripts/check_experiment_ready.py`：正式实验就绪检查（LLM/DB/embedding/数据集引用PDF/冻结标记）（Issue #49）
@@ -108,6 +109,7 @@
 
 ### Changed
 
+- `ClaimStatus` 加 `UNVERIFIED`：未检索/校验不可用时不冒充 unsupported（会议方案 §4.7/§5）
 - `app/agent/answer_generator.py` / `orchestrator.py`：大 PDF 走分层总结（不再降级 Top-K）；回答后按事实句补检索再校验（方案 §4.6）
 - `app/agent/factory.py` / `config.py`：默认只启用 Tavily API，停用 DDG/Bing HTML（ALLOW_HTML_SEARCH=1 才启用）
 - `app/agent/orchestrator.py::_enrich_query`：Planner 子查询补回 Chapter 章节约束（Issue #99，#64 同做法）

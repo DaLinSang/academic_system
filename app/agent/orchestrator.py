@@ -141,6 +141,8 @@ class Orchestrator:
         session_id: str = "default",
         user_id: str = "default",
         turn_index: int = 0,
+        # 方案 §4.3：UI 把"当前会话选中的文档"传进来，用于"总结这个文档"指代。
+        active_document_file_name: str | None = None,
         history: list[ConversationTurn] | None = None,
         enable_routing: bool = True,
         enable_retrieval: bool = True,
@@ -152,6 +154,7 @@ class Orchestrator:
             session_id=session_id,
             user_id=user_id,
             turn_index=turn_index,
+            active_document_file_name=active_document_file_name,
             history=list(history) if history else [],
             enable_routing=enable_routing,
             enable_retrieval=enable_retrieval,
@@ -174,10 +177,15 @@ class Orchestrator:
         # 2) 路由
         route = self._decide_route(state, enable_routing)
 
-        # 单篇文档总结：只有 summary 意图 + 唯一目标文件才加载全文（方案 §3.5）。
-        # 普通 RAG 问答（含"分析/内容"等词）仍走证据检索与页码引用，不误触发。
-        if enable_retrieval and self._is_full_document_request(question, self._indexed_document_names()):
-            self._load_full_document(state)
+        # 单篇文档总结：只有 summary 意图 + 唯一目标文件才加载全文（方案 §3.5/§4.4）。
+        # 多份 PDF 且无法判断时给出澄清，不猜、不混用（needs_clarification）。
+        needs_clarification = False
+        if enable_retrieval and self._is_full_document_request(
+            question, self._indexed_document_names(), state.active_document_file_name
+        ):
+            needs_clarification = not self._load_full_document(state)
+            if needs_clarification:
+                state.log("generate", "skip", reason="document_clarification")
 
         # 3) 规划
         if route.need_planning:
@@ -190,27 +198,31 @@ class Orchestrator:
                     self._record_retry(state, "planner")
                     state.log("plan", "end", steps=len(state.plan))
 
-        # 4) 工具执行：用户文档检索
-        if route.need_retrieval and state.enable_retrieval:
+        # 4) 工具执行：用户文档检索。
+        # 单篇全文总结已加载 document_text，不能再跑 Top-K 检索污染证据池——
+        # 否则 verify 会用普通 RAG 证据整段判定，逐条 scoped 检索永远不触发。
+        if route.need_retrieval and state.enable_retrieval and not state.document_text:
             self._run_retrieval(state)
 
-        # 4.5) 网页搜索（可选工具）。本地证据不足且确实需要联网时才触发。
-        # 没注入工具时整段跳过，行为与此前完全一致。
-        if self.enable_web_search and self.web_search_tool is not None:
+        # 4.5) 网页搜索（可选工具）。本地 PDF 总结不联网（方案 §8.2），
+        # 其余情况仍是本地证据不足且确实需要联网时才触发。
+        if self.enable_web_search and self.web_search_tool is not None and not state.document_text:
             self._maybe_web_search(state, route)
             if is_study_request(state.question) and state.evidence:
                 state.evidence = prioritize_study_evidence(state.evidence)
 
-        # 5) 生成草稿
-        with self._stage(state, "generate") as ok:
-            if ok:
-                state.draft_answer = self.answer_generator.generate(state)
-                state.build_citations()
-                self._record_retry(state, "generate")
-                state.log("generate", "end", chars=len(state.draft_answer))
+        # 5) 生成草稿。多份文档歧义时 _load_full_document 已写好澄清，
+        # 不能再让生成器覆盖它（否则又编出一个不可靠答案）。
+        if not needs_clarification:
+            with self._stage(state, "generate") as ok:
+                if ok:
+                    state.draft_answer = self.answer_generator.generate(state)
+                    state.build_citations()
+                    self._record_retry(state, "generate")
+                    state.log("generate", "end", chars=len(state.draft_answer))
 
         # 6) 校验
-        if enable_verification:
+        if enable_verification and not needs_clarification:
             self._run_verification(state)
 
             # 6.5) 校验发现问题后的重规划（Issue #47）。
@@ -249,15 +261,19 @@ class Orchestrator:
     # 各阶段
     # ------------------------------------------------------------------ #
     @staticmethod
-    def _is_full_document_request(question: str, indexed_names: list[str] | None = None) -> bool:
-        """方案 §3.5：只有 summary 意图且目标文档唯一才走全文总结。
+    def _is_full_document_request(
+        question: str,
+        indexed_names: list[str] | None = None,
+        active_document_file_name: str | None = None,
+    ) -> bool:
+        """方案 §3.5/§4.4：只有 summary 意图且目标文档唯一才走全文总结。
 
         替换 B 的宽泛关键词匹配——"分析""内容"这类词不该把普通 RAG 问答
         （如"RAG 有什么优势"）误判为全文总结。
         """
         from app.agent.document_intent import should_summarize
 
-        return should_summarize(question, indexed_names)
+        return should_summarize(question, indexed_names, active_document_file_name)
 
     def _indexed_document_names(self) -> list[str]:
         listed = getattr(self.retriever, "list_indexed_documents", None)
@@ -269,21 +285,43 @@ class Orchestrator:
         except Exception:  # noqa: BLE001 - 列目录失败不影响主流程
             return []
 
-    def _load_full_document(self, state: AgentState) -> None:
-        from app.agent.document_intent import requested_document
+    def _load_full_document(self, state: AgentState) -> bool:
+        """加载全文；多份 PDF 无法判断时给出明确澄清，绝不猜（方案 §4.4）。
+
+        返回是否成功加载到全文。
+        """
+        from app.agent.document_intent import AMBIGUOUS, requested_document
 
         reader = getattr(self.retriever, "read_document", None)
         if not callable(reader):
-            return
-        file_name = requested_document(state.question, self._indexed_document_names())
+            return False
+        indexed = self._indexed_document_names()
+        file_name = requested_document(
+            state.question, indexed, state.active_document_file_name
+        )
+        if file_name == AMBIGUOUS:
+            state.log("document_read", "ambiguous", candidates=indexed[:10])
+            state.draft_answer = (
+                "检测到多份 PDF，且当前没有选中的文档。请指明文件名，"
+                "或先选择当前文档后再问“总结这个文档”。可选文件："
+                + "、".join(indexed[:10])
+            )
+            return False
         if not file_name:
-            return
+            return False
         try:
             state.document_text = reader(file_name)
             state.document_file_name = file_name
             state.log("document_read", "end", file_name=file_name, chars=len(state.document_text))
+            return True
         except Exception as exc:  # noqa: BLE001
             state.log("document_read", "error", error=str(exc), file_name=file_name)
+            # 方案 §7测试6：目标文档不存在时不从其他 PDF 代替回答
+            state.draft_answer = (
+                f"当前文档 {file_name} 无法读取（可能已被删除或未索引），"
+                "请重新上传或选择其他文件。"
+            )
+            return False
 
     @staticmethod
     def _history_kw(state: AgentState) -> dict[str, list[ConversationTurn]]:
@@ -596,57 +634,94 @@ class Orchestrator:
                 degraded_queries=[str(d["query"]) for d in degradations],
             )
 
-    def _supplement_evidence_for_summary(self, state: AgentState) -> None:
-        """回答后检索（方案 §4.6）：为全文总结的事实句补回带页码证据。
+    # 回答后检索每条 Claim 的上限（方案 §4.6 + C review）：超出部分标 unverified，
+    # 不能用前几条的证据池假装完成全量校验。
+    MAX_VERIFIED_CLAIMS = 8
 
-        保守设计：
-        - 只对明确指定单篇文档的总结路径生效；
-        - 最多 5 句、每句 top_k=3，控制 RQ4 成本；
-        - 通过鸭子类型调用 retriever.retrieve，不依赖 B 尚未交付的
-          retrieve_for_claim 接口；接口到位后可平滑替换。
+    def _supplement_evidence_for_summary(self, state: AgentState) -> bool:
+        """回答后检索（方案 §4.6，C review 修正版）。
+
+        - 复用 C 的 `split_claims()`，不在 A 侧维护第二套句子切分规则；
+        - 每条 Claim 用 B 的 `retrieve_for_claim(claim, [file], top_k=3)` 真正限定文件；
+        - 每条 Claim 单独验证；超出成本上限的标 unverified（绝不标 unsupported）；
+        - 无 scoped 接口时整段降级为 unverified，不拿全库检索冒充 scoped。
+
+        返回 True 表示本轮已完成逐条校验，Orchestrator 不应再做整段 verify。
         """
-        retrieve = getattr(self.retriever, "retrieve", None)
+        from app.core.types import ClaimCheck, ClaimStatus
+        from app.verification.verifier import split_claims
+
         file_name = state.document_file_name
-        if not callable(retrieve) or not file_name:
+        scoped = getattr(self.retriever, "retrieve_for_claim", None)
+        if not file_name or not callable(scoped):
             state.log("post_hoc_retrieval", "skip", reason="no_scoped_retriever")
-            return
+            return False
 
-        # 从回答里抽事实句：跳过标题/列表符号/来源行，保留有主体的句子
-        sentences = [
-            s.strip() for s in re.split(r"[。！？\n]+", state.draft_answer)
-            if len(s.strip()) >= 12 and not s.strip().startswith(("#", "-", "*", "[", "来源", "图", "表"))
-        ][:5]
-        if not sentences:
-            state.log("post_hoc_retrieval", "skip", reason="no_factual_sentences")
-            return
+        claims = split_claims(state.draft_answer)
+        if not claims:
+            state.log("post_hoc_retrieval", "skip", reason="no_claims")
+            return False
 
-        collected: list[object] = []
+        all_evidence: list[object] = []
         seen_ids: set[str] = set()
-        for sentence in sentences:
+        checks: list[ClaimCheck] = []
+        verified = 0
+
+        for idx, claim in enumerate(claims):
+            if idx >= self.MAX_VERIFIED_CLAIMS:
+                # C review #2：未处理的 Claim 必须标 unverified，不能 unsupported
+                check = ClaimCheck(
+                    claim=claim,
+                    status=ClaimStatus.UNVERIFIED,
+                    note="未检索证据（超出本轮校验预算），状态为 unverified",
+                )
+                checks.append(check)
+                continue
             try:
-                # B 的 retrieve 目前不支持 file_names；先尝试 scoped 接口，
-                # 没有就退回普通检索并只保留目标文件的证据（防跨文件串证据）。
-                scoped = getattr(self.retriever, "retrieve_for_claim", None)
-                if callable(scoped):
-                    found = scoped(sentence, [file_name], top_k=3)
-                else:
-                    found = retrieve(sentence, top_k=3)
-                    found = [e for e in found if getattr(e, "file_name", None) == file_name]
+                found = scoped(claim, [file_name], top_k=3)
+                # 双保险：接口保证 scoped，但仍校验返回值确实来自目标文件
+                found = [e for e in found if getattr(e, "file_name", None) == file_name]
             except Exception as exc:  # noqa: BLE001
                 state.log("post_hoc_retrieval", "error", error=type(exc).__name__)
-                continue
+                found = []
+
             for evidence in found:
                 chunk_id = getattr(evidence, "chunk_id", "")
                 if chunk_id and chunk_id not in seen_ids:
                     seen_ids.add(chunk_id)
-                    collected.append(evidence)
+                    all_evidence.append(evidence)
 
-        if collected:
-            state.add_evidence(collected)
+            if found:
+                try:
+                    claim_checks = self.verifier.verify(claim, found)
+                    self._absorb_usage(state, self.verifier)
+                    checks.extend(claim_checks or [])
+                except Exception as exc:  # noqa: BLE001
+                    state.log("post_hoc_retrieval", "verify_error", error=type(exc).__name__)
+                    checks.append(ClaimCheck(
+                        claim=claim,
+                        status=ClaimStatus.UNVERIFIED,
+                        note=f"校验调用失败：{type(exc).__name__}",
+                    ))
+            else:
+                # 没有目标文件证据 → unverified（不是 unsupported）
+                checks.append(ClaimCheck(
+                    claim=claim,
+                    status=ClaimStatus.UNVERIFIED,
+                    note="目标 PDF 内未找到对应证据，状态为 unverified",
+                ))
+            verified += 1
+
+        if all_evidence:
+            state.add_evidence(all_evidence)
+        state.claims = checks
         state.log(
             "post_hoc_retrieval", "end",
-            sentences=len(sentences), evidence=len(collected), file_name=file_name,
+            claims=len(claims), verified=verified,
+            unverified=len(claims) - verified,
+            evidence=len(all_evidence), file_name=file_name,
         )
+        return True
 
     def _run_verification(self, state: AgentState) -> None:
         with self._stage(state, "verify") as ok:
@@ -654,10 +729,20 @@ class Orchestrator:
                 # 校验器崩溃时不能让整个请求失败：降级为"未校验"
                 state.log("verify", "skip", reason="verifier unavailable")
                 return
-            # 方案 §4.6：全文总结路径原本没有 evidence → 校验会整段跳过。
-            # 这里按回答中的事实句回查原文档，补出带页码的 Evidence 再校验。
-            if state.document_text and not state.evidence:
-                self._supplement_evidence_for_summary(state)
+            # 方案 §4.6：全文总结路径按 Claim 逐条 scoped 检索并逐条校验。
+            # 已逐条完成时不再整段 verify——否则会用汇总证据池重复判定，
+            # 并把"未检索"的 Claim 误标成 unsupported。
+            if state.document_text:
+                if self._supplement_evidence_for_summary(state):
+                    state.log(
+                        "verify", "end",
+                        claims=len(state.claims),
+                        unverified=sum(
+                            1 for c in state.claims if c.status == ClaimStatus.UNVERIFIED
+                        ),
+                        mode="per_claim",
+                    )
+                    return
             if not state.evidence:
                 state.claims = []
                 state.log(
@@ -736,8 +821,11 @@ class Orchestrator:
                 steps=len(new_plan),
             )
 
-            # 用新的检索查询补证据；state.add_evidence 按 chunk_id 去重，不会重复
-            self._run_retrieval_with_plan(state, new_plan)
+            # 用新的检索查询补证据；state.add_evidence 按 chunk_id 去重，不会重复。
+            # 全文总结路径例外：它按 Claim 用 retrieve_for_claim 限定目标 PDF，
+            # 不能跑全库计划检索，否则会混入其他文件证据。
+            if not state.document_text:
+                self._run_retrieval_with_plan(state, new_plan)
 
             # 重新生成与校验一次，然后无条件停手
             with self._stage(state, "generate") as gen_ok:
@@ -745,7 +833,7 @@ class Orchestrator:
                     state.draft_answer = self.answer_generator.generate(state)
                     state.build_citations()
                     state.log("generate", "end", chars=len(state.draft_answer), replan=True)
-            if state.evidence:
+            if state.evidence or state.document_text:
                 self._run_verification(state)
 
             budget -= 1
