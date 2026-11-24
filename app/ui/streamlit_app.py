@@ -17,6 +17,7 @@ from app.core.types import AgentState, ConversationTurn
 from app.ui.presenters import (
     answer_panel_summary,
     claim_presentations,
+    delete_document_assets,
     document_status_presentation,
     inspect_pdf_text,
     memory_write_summary,
@@ -486,7 +487,10 @@ def _render_upload(orch: Any, runtime: str) -> None:
 
 
 def _render_documents(
-    persisted: dict[str, dict[str, Any]], index_error: str | None
+    orch: Any,
+    runtime: str,
+    persisted: dict[str, dict[str, Any]],
+    index_error: str | None,
 ) -> None:
     statuses = _document_statuses()
     paths = {
@@ -510,6 +514,35 @@ def _render_documents(
             st.caption(row["label"])
             if row["detail"]:
                 st.caption(row["detail"])
+            if runtime == "Real":
+                with st.popover(
+                    "文档操作",
+                    icon=":material/more_horiz:",
+                    key=f"document-actions-{name}",
+                    use_container_width=True,
+                ):
+                    st.warning("删除会同时移除数据库索引和上传的 PDF 原文件。")
+                    confirmed = st.checkbox(
+                        "确认删除", key=f"document-delete-confirm-{name}"
+                    )
+                    if st.button(
+                        "删除文档",
+                        key=f"document-delete-{name}",
+                        disabled=not confirmed,
+                        use_container_width=True,
+                    ):
+                        try:
+                            index_deleted, file_deleted = delete_document_assets(
+                                orch.retriever, name, settings.runtime.data_raw_dir
+                            )
+                            statuses.pop(name, None)
+                            if index_deleted or file_deleted:
+                                st.success("文档及其可用数据已删除。")
+                            else:
+                                st.info("未找到可删除的文档数据。")
+                            st.rerun()
+                        except Exception as exc:  # noqa: BLE001
+                            st.error(f"删除失败：{type(exc).__name__}: {exc}")
     else:
         st.caption("尚未上传 PDF。")
 
@@ -521,7 +554,6 @@ def _render_memories(
     enabled: bool,
     latest_state: AgentState | None,
 ) -> None:
-    st.caption(f"用户：{user_id} · 会话：{session_id}")
     if not enabled:
         st.info("当前已关闭长期记忆；本轮不会读取或保存。")
         return
@@ -892,7 +924,9 @@ def main() -> None:
             with st.expander(
                 f"文档状态 · {uploaded_documents} 个文件", expanded=True
             ):
-                _render_documents(persisted_indexes, index_status_error)
+                _render_documents(
+                    orch, runtime, persisted_indexes, index_status_error
+                )
             latest_state = (
                 st.session_state.history[-1]["state"]
                 if st.session_state.history

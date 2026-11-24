@@ -1,10 +1,25 @@
 # Member C Progress
 
-更新日期：2026-11-23
+更新日期：2026-11-24
 
-当前开发分支：`docs/c-progress-pr100-merged`
+当前开发分支：`feat/c-claim-context-rules`
 
-基线提交：`origin/main@62a0203`（已包含 PR #95、#96、#98、#100、#102）
+基线提交：`origin/main@5564f58`（已包含 PR #104、#105）
+
+## 2026-11-24 PDF 总结与 Claim 跟进
+
+- Review PR #107 并请求修改：当前回答后补检索跳过 Markdown 事实列表、只处理
+  前 5 句、缺少真正的文件范围检索，并且全文总结路径没有注入长期记忆。
+- Claim Splitter 已排除 Markdown 标题、小节标签、来源区、代码块和表格分隔线，
+  同时保留事实性列表项。
+- 新增 `ClaimSpan` 字符偏移；A 的回答后检索与 C 的正文标记应统一复用同一套
+  Claim 切分结果。
+- 新增独立 `VerificationContext` 契约，按当前 Prompt > 最近会话 > 长期记忆
+  排序；上下文来源明确不是学术引用，不修改冻结的 `Evidence` 公共结构。
+- B 的 `delete_document()` 已接入右侧文档区；Real 模式删除前二次确认，同时清理
+  数据库索引、页缓存和 `data/raw` 中的上传 PDF。
+- 移除长期记忆面板中重复显示的用户 ID / 会话 ID，小幅清理演示界面，但不改动
+  三栏布局、会话功能或现有交互。
 
 ## 2026-11-22 冻结状态
 

@@ -11,6 +11,7 @@ from app.core.interfaces import Verifier
 from app.core.types import (
     AgentState,
     ClaimStatus,
+    ConversationTurn,
     Evidence,
     LLMResponse,
     RetrievalMethod,
@@ -21,8 +22,11 @@ from app.core.types import (
 from app.verification import (
     LexicalVerifier,
     SemanticVerifier,
+    VerificationSourceType,
+    build_verification_context,
     is_insufficient_answer,
     is_nonfactual_claim,
+    split_claim_spans,
     split_claims,
 )
 
@@ -138,6 +142,64 @@ def test_nonfactual_filter_keeps_real_document_claims() -> None:
 
     assert is_nonfactual_claim(answer) is False
     assert split_claims(answer) == ["讲义中出现了 Agentic AI，并把规划列为智能体组件"]
+
+
+def test_split_claims_excludes_markdown_headings_but_keeps_factual_bullets() -> None:
+    answer = (
+        "## 主要结果\n"
+        "- RAG-Sequence 对整个输出序列使用同一组文档。[1]\n"
+        "- RAG-Token 可以为不同 token 使用不同文档。[2]\n"
+        "## 局限性\n"
+    )
+
+    assert split_claims(answer) == [
+        "RAG-Sequence 对整个输出序列使用同一组文档 [1]",
+        "RAG-Token 可以为不同 token 使用不同文档 [2]",
+    ]
+
+
+def test_split_claims_excludes_source_section_and_code_fence() -> None:
+    answer = (
+        "模型使用混合检索。\n"
+        "```python\nresult = retrieve(query)\n```\n"
+        "## 来源\n"
+        "[1] rag_paper.pdf 第 3 页\n"
+    )
+
+    assert split_claims(answer) == ["模型使用混合检索"]
+
+
+def test_split_claim_spans_point_back_to_original_answer() -> None:
+    answer = "## 方法\n- 模型结合 BM25 和向量检索。[1]\n"
+
+    spans = split_claim_spans(answer)
+
+    assert len(spans) == 1
+    assert spans[0].text == "模型结合 BM25 和向量检索 [1]"
+    assert answer[spans[0].start : spans[0].end].startswith("模型结合 BM25")
+
+
+def test_verification_context_prioritises_prompt_then_history_then_memory() -> None:
+    context = build_verification_context(
+        "我的研究方向现在是 Agentic RAG。",
+        history=[ConversationTurn(question="旧问题", answer="旧回答", turn_index=1)],
+        memory_context=["我的研究方向是传统 NLP。"],
+    )
+
+    assert [source.source_type for source in context.sources] == [
+        VerificationSourceType.USER_PROMPT,
+        VerificationSourceType.CONVERSATION,
+        VerificationSourceType.LONG_TERM_MEMORY,
+    ]
+    assert all(source.academic_citation is False for source in context.sources)
+    assert context.sources[0].priority > context.sources[-1].priority
+
+
+def test_verification_context_ignores_blank_sources() -> None:
+    context = build_verification_context("  ", memory_context=["", "偏好中文回答"])
+
+    assert len(context.sources) == 1
+    assert context.sources[0].source_id == "memory:1"
 
 
 @pytest.mark.parametrize("case", _CASES, ids=[case["case_id"] for case in _CASES])

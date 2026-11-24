@@ -3,6 +3,7 @@
 from app.ui.presenters import (
     answer_panel_summary,
     claim_presentations,
+    delete_document_assets,
     document_status_presentation,
     inspect_pdf_text,
     memory_write_summary,
@@ -20,6 +21,7 @@ from app.ui.presenters import (
 __all__ = [
     "answer_panel_summary",
     "claim_presentations",
+    "delete_document_assets",
     "document_status_presentation",
     "inspect_pdf_text",
     "memory_write_summary",

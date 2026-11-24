@@ -452,6 +452,24 @@ def safe_pdf_name(filename: str) -> str:
     return f"{stem or 'document'}.pdf"
 
 
+def delete_document_assets(
+    retriever: Any,
+    file_name: str,
+    raw_dir: Path,
+) -> tuple[bool, bool]:
+    """Delete a document index and its owned upload, returning both outcomes."""
+    safe_name = safe_pdf_name(file_name)
+    delete_document = getattr(retriever, "delete_document", None)
+    if not callable(delete_document):
+        raise RuntimeError("当前 Retriever 不支持删除文档。")
+    index_deleted = bool(delete_document(safe_name))
+    path = raw_dir / safe_name
+    file_deleted = path.exists()
+    if file_deleted:
+        path.unlink()
+    return index_deleted, file_deleted
+
+
 def pdf_page_count(path: Path) -> int | None:
     """Read a PDF page count, returning None for an unreadable document."""
     try:
