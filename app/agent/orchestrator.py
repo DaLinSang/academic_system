@@ -143,6 +143,9 @@ class Orchestrator:
         turn_index: int = 0,
         # 方案 §4.3：UI 把"当前会话选中的文档"传进来，用于"总结这个文档"指代。
         active_document_file_name: str | None = None,
+        # 对话框 + 号上传的临时文档全文（不进知识库）：UI 上传时解析好传进来。
+        attached_document_text: str = "",
+        attached_document_file_name: str | None = None,
         history: list[ConversationTurn] | None = None,
         enable_routing: bool = True,
         enable_retrieval: bool = True,
@@ -155,6 +158,8 @@ class Orchestrator:
             user_id=user_id,
             turn_index=turn_index,
             active_document_file_name=active_document_file_name,
+            attached_document_text=attached_document_text,
+            attached_document_file_name=attached_document_file_name,
             history=list(history) if history else [],
             enable_routing=enable_routing,
             enable_retrieval=enable_retrieval,
@@ -177,12 +182,16 @@ class Orchestrator:
         # 2) 路由
         route = self._decide_route(state, enable_routing)
 
-        # 单篇文档总结：只有 summary 意图 + 唯一目标文件才加载全文（方案 §3.5/§4.4）。
+        # 单篇文档通读：两种来源
+        #  (a) 对话框 + 号上传的临时文档（attached_document_text）——用户既然附了
+        #      文档，任何问题都针对它，不必非说"总结"，且不查知识库；
+        #  (b) 知识库文档的 summary 意图 + 唯一目标（方案 §3.5/§4.4）。
         # 多份 PDF 且无法判断时给出澄清，不猜、不混用（needs_clarification）。
         needs_clarification = False
-        if enable_retrieval and self._is_full_document_request(
+        has_attached = bool(state.attached_document_text)
+        if enable_retrieval and (has_attached or self._is_full_document_request(
             question, self._indexed_document_names(), state.active_document_file_name
-        ):
+        )):
             needs_clarification = not self._load_full_document(state)
             if needs_clarification:
                 state.log("generate", "skip", reason="document_clarification")
@@ -294,6 +303,20 @@ class Orchestrator:
         返回是否成功加载到全文。
         """
         from app.agent.document_intent import AMBIGUOUS, requested_document
+
+        # 对话内临时文档优先：全文已由 UI 解析好传进来，不查数据库、不进 RAG。
+        if state.attached_document_text:
+            state.document_text = state.attached_document_text
+            state.document_file_name = (
+                state.attached_document_file_name or "对话内文档"
+            )
+            state.log(
+                "document_read", "attached",
+                file_name=state.document_file_name,
+                chars=len(state.document_text),
+                source="conversation",
+            )
+            return True
 
         reader = getattr(self.retriever, "read_document", None)
         if not callable(reader):
@@ -641,6 +664,44 @@ class Orchestrator:
     # 不能用前几条的证据池假装完成全量校验。
     MAX_VERIFIED_CLAIMS = 8
 
+    @staticmethod
+    def _match_segments(claim: str, segments: list[str], file_name: str, top_k: int) -> list[object]:
+        """从对话内文档全文分段里挑与 claim 字面重叠最高的几段（轻量证据）。
+
+        这是"未入库文档"的 scoped 检索替身：不建向量索引，用词面打分，
+        只用于给 Verifier 提供可核对的原文片段，不伪装成知识库检索结果。
+        """
+        from app.core.types import Evidence, RetrievalMethod
+
+        # 中文用 2-gram + 英文整词：中文没有空格，整句当 token 会匹配不到
+        zh = re.findall(r"[\u4e00-\u9fff]{2,}", claim.lower())
+        tokens = {"".join(run[i:i + 2]) for run in zh for i in range(len(run) - 1)}
+        tokens |= {w for w in re.findall(r"[a-z]{3,}", claim.lower())}
+        if not tokens:
+            return []
+        scored: list[tuple[int, str, str]] = []
+        for seg in segments:
+            body = seg.lower()
+            hits = sum(1 for t in tokens if t in body)
+            page_match = re.search(r"\[Page (\d+)\]", seg)
+            page = int(page_match.group(1)) if page_match else 1
+            scored.append((hits, seg, str(page)))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        out: list[object] = []
+        for rank, (hits, seg, page) in enumerate(scored[:top_k], start=1):
+            if hits == 0:
+                continue
+            out.append(Evidence(
+                chunk_id=f"attached-{file_name}-{rank}",
+                document_id=f"attached:{file_name}",
+                file_name=file_name,
+                page_number=int(page),
+                text=seg[:1200],  # 控制单次 verifier 调用的 token
+                score=float(hits),
+                retrieval_method=RetrievalMethod.BM25,
+            ))
+        return out
+
     def _supplement_evidence_for_summary(self, state: AgentState) -> bool:
         """回答后检索（方案 §4.6，C review 修正版）。
 
@@ -655,7 +716,19 @@ class Orchestrator:
         from app.verification.verifier import split_claims
 
         file_name = state.document_file_name
-        scoped = getattr(self.retriever, "retrieve_for_claim", None)
+        # 对话内临时文档：没进知识库，retrieve_for_claim 查不到。
+        # 用手上的全文分段构造证据，仍能让 claim 被真实验证（不是全标 unverified）。
+        if state.attached_document_text:
+            from app.agent.document_summary import split_pages_into_segments
+            segments = split_pages_into_segments(state.attached_document_text)
+            attached_file = file_name
+
+            def scoped(claim, names, top_k=3, _segments=segments, _file=attached_file):
+                return self._match_segments(claim, _segments, _file, top_k)
+
+            state.log("post_hoc_retrieval", "scoped_source", source="attached_text", segments=len(segments))
+        else:
+            scoped = getattr(self.retriever, "retrieve_for_claim", None)
         if not file_name or not callable(scoped):
             state.log("post_hoc_retrieval", "skip", reason="no_scoped_retriever")
             return False

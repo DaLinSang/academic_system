@@ -93,10 +93,22 @@ def summarize_document(
 
     if len(text) <= small_doc_chars:
         state.log("document_summary", "mode", mode="full", chars=len(text))
-        return _summarize_once(
-            llm, state, text + memory_hint, file_name,
-            _SYSTEM_PROMPT + "\n" + _STRUCTURE_HINT,
-        )
+        # 区分"总结整篇"和"带着具体问题问这篇文档"：
+        # 用户附了文档后问"它用了什么方法"，应回答问题而非输出六段式总结。
+        from app.agent.document_intent import document_task
+        is_summary = document_task(state.question) == "summary"
+        if is_summary:
+            user_prompt = (
+                f"文件：{file_name}\n全文：\n{text}\n\n用户问题：{state.question}\n"
+                + _STRUCTURE_HINT + memory_hint
+            )
+        else:
+            user_prompt = (
+                f"文件：{file_name}\n全文：\n{text}\n\n"
+                f"请只根据这份文档回答下面的具体问题，不要复述整篇总结：\n{state.question}"
+                + memory_hint
+            )
+        return _summarize_once(llm, state, user_prompt, file_name, _SYSTEM_PROMPT)
 
     segments = split_pages_into_segments(text, max_chars=segment_chars)
     state.log(
