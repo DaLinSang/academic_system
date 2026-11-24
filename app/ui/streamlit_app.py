@@ -428,12 +428,14 @@ def _render_claims(state: AgentState) -> None:
 def _split_answer_sections(answer: str) -> tuple[str, str]:
     """Split the model's normal answer from claim/verification feedback.
 
-    Some generators include a final ``缺少证据的部分`` block in the draft, while
-    the orchestrator may append verifier warnings afterwards.  They are both
-    verification feedback in the UI and should appear below the claim divider.
+    Some generators include a final ``缺少证据的部分`` or
+    ``现有资料不足以回答的部分`` block in the draft, while the orchestrator may
+    append verifier warnings afterwards.  They are all verification feedback in
+    the UI and should appear below the claim divider.
     """
     markers = (
-        r"(?m)^(?:\d+\.\s*)?(?:\*\*)?(?:缺少证据的部分|缺少的信息)"
+        r"(?m)^(?:\d+\.\s*)?(?:\*\*)?(?:缺少证据的部分|缺少的信息|"
+        r"(?:现有)?(?:资料|证据)不足以回答的部分)"
         r"(?:\*\*)?\s*(?:[：:]|$)",
         r"(?m)^⚠️ 以下内容与已检索证据不一致或缺少支持",
         r"(?m)^ℹ️ 以下内容现有证据不足",
