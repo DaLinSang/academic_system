@@ -133,15 +133,26 @@ def build_stage1_orchestrator(
     llm = get_llm()
 
     def build_web_tool():
-        """Issue #89/#96：有 Tavily key 走 API，失败/空结果自动回退 HTML 爬取。"""
+        """方案 §7：默认只启用稳定的 Tavily API，停用 DDG/Bing HTML 抓取。
+
+        - 有 Tavily key → 只用 TavilySearchTool；
+        - 无 key → 不挂载搜索工具（联网不可用，回答如实说明），
+          不再默认用质量不稳定的 HTML 爬取；
+        - 旧 HTML/Fallback 代码保留，只有显式设 ALLOW_HTML_SEARCH=1 才装配，
+          便于 A/B 对比实验或调试，但不进入默认链路。
+        """
         if not enable_web_search:
             return None
+        allow_html = settings.search.allow_html_search
         if settings.search.tavily_api_key:
-            from app.agent.web_search_fallback import FallbackSearchTool
             from app.retrieval.tavily_search import TavilySearchTool
-            # B review：key 配了但 API 失败/空结果时不能直接返回空，要降级到 HTML
-            return FallbackSearchTool(TavilySearchTool(), WebSearchTool())
-        return WebSearchTool()
+            if allow_html:
+                from app.agent.web_search_fallback import FallbackSearchTool
+                return FallbackSearchTool(TavilySearchTool(), WebSearchTool())
+            return TavilySearchTool()
+        if allow_html:
+            return WebSearchTool()
+        return None
 
     if memory_strategy == "rule":
         memory_manager = RuleBasedMemoryManager()

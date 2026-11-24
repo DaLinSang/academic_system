@@ -98,6 +98,9 @@ class ClaimStatus(StrEnum):
     SUPPORTED = "supported"
     PARTIALLY_SUPPORTED = "partially_supported"
     UNSUPPORTED = "unsupported"
+    # 会议方案 §4.7/§5：未检索证据或校验不可用时标 unverified，
+    # 不能与"找到证据但不支持"混为一谈；正式 RQ3 指标将其排除出分母。
+    UNVERIFIED = "unverified"
 
 
 class RetrievalMethod(StrEnum):
@@ -423,6 +426,9 @@ class AgentState(_Base):
     question: str
     session_id: str = "default"
     user_id: str = "default"
+    # 会议方案 §4.3：当前会话最近上传/选中的 PDF（UI 传入）。
+    # "总结这个文档"等指代用它消解；新建会话清空、切换会话由 UI 恢复。
+    active_document_file_name: str | None = None
     turn_index: int = 0
     # 上一轮的问答。由调用方传入；为空时行为与此前完全一致（单轮）。
     # 只放简短历史，完整记录由 SessionStore 负责，不塞进 AgentState。

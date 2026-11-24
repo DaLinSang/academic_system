@@ -120,36 +120,12 @@ class LLMAnswerGenerator:
     def _generate_from_full_document(self, state: AgentState) -> str:
         """Summarize one persisted document without Top-K truncation.
 
-        The retriever has already preserved page boundaries.  Keep a generous
-        safety cap so a very large OCR PDF cannot exhaust the model context;
-        larger documents continue through the existing multi-chunk path.
+        小文档一次性总结；大文档按页分段后分层总结（方案 §3.3）。
+        不再把超长文档降级回 Top-K 证据路径——那会让"总结"只反映少量 chunk。
         """
-        text = state.document_text
-        if len(text) > 50000:
-            state.log("document_read", "too_large", chars=len(text))
-            return self._generate_from_evidence(state)
-        prompt = (
-            "请只根据下面这份完整文档生成中文总结。请覆盖文档主题、背景/目标、"
-            "方法或结构、主要内容、结论和局限；不要声称文档中不存在的信息。\n\n"
-            f"文件：{state.document_file_name}\n全文：\n{text}\n\n"
-            f"用户问题：{state.question}"
-        )
-        try:
-            response = self.llm.generate(
-                [{"role": "system", "content": (
-                    "你是学术知识助手。只依据提供的单篇 PDF 原文回答。"
-                    "文中的 [Page N] 是原始 PDF 页码；如果能明确定位事实，可以写“第 N 页”，"
-                    "无法定位时不要编造页码。不要生成 [1] 形式的检索引用编号。"
-                    "对于文档没有说明的事情要明确说资料不足。"
-                )},
-                 {"role": "user", "content": prompt}],
-                temperature=self.temperature,
-            )
-        except Exception as exc:  # noqa: BLE001
-            state.log("generate", "error", error=f"{type(exc).__name__}: {exc}")
-            return "文档全文已读取，但模型暂时无法生成总结。"
-        state.usage = state.usage.add(response.usage)
-        return response.text.strip() or "模型没有返回有效总结。"
+        from app.agent.document_summary import summarize_document
+
+        return summarize_document(self.llm, state)
 
     # ------------------------------------------------------------------ #
     # 路径 1：direct / 无证据
