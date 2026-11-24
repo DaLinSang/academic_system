@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -424,10 +425,35 @@ def _render_claims(state: AgentState) -> None:
                 st.caption(detail)
 
 
+def _split_answer_sections(answer: str) -> tuple[str, str]:
+    """Split the model's normal answer from claim/verification feedback.
+
+    Some generators include a final ``缺少证据的部分`` block in the draft, while
+    the orchestrator may append verifier warnings afterwards.  They are both
+    verification feedback in the UI and should appear below the claim divider.
+    """
+    markers = (
+        r"(?m)^(?:\d+\.\s*)?(?:\*\*)?(?:缺少证据的部分|缺少的信息)"
+        r"(?:\*\*)?\s*(?:[：:]|$)",
+        r"(?m)^⚠️ 以下内容与已检索证据不一致或缺少支持",
+        r"(?m)^ℹ️ 以下内容现有证据不足",
+        r"(?m)^ℹ️ 以下内容仅有部分证据支持",
+    )
+    starts = [match.start() for pattern in markers if (match := re.search(pattern, answer))]
+    if not starts:
+        return answer.strip(), ""
+    start = min(starts)
+    return answer[:start].rstrip(), answer[start:].lstrip()
+
+
 def _render_state(
     state: AgentState, *, uploaded_documents: int, indexed_documents: int | None
 ) -> None:
-    st.markdown(state.final_answer)
+    answer_body, claim_feedback = _split_answer_sections(state.final_answer)
+    st.markdown(answer_body)
+    st.markdown('<hr class="aa-claim-divider">', unsafe_allow_html=True)
+    if claim_feedback:
+        st.markdown(claim_feedback)
     citations = used_citations(state)
     summary = answer_panel_summary(state)
     if summary["unsupported"]:
@@ -455,7 +481,6 @@ def _render_state(
                         f"**[{citation['index']}] {citation['file_name']} "
                         f"第 {citation['page_number']} 页**"
                     )
-    st.markdown('<hr class="aa-claim-divider">', unsafe_allow_html=True)
     with st.expander(
         f"Claim Verification · {summary['claims']} 条"
         + (f" · {summary['unsupported']} 条需注意" if summary["unsupported"] else ""),
