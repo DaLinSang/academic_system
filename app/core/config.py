@@ -97,6 +97,10 @@ class SearchSettings:
     )
     tavily_timeout: int = field(default_factory=lambda: _get_int("TAVILY_TIMEOUT", 40))
     tavily_depth: str = field(default_factory=lambda: _get("TAVILY_DEPTH", "basic"))
+    # 方案 §7：默认停用 DDG/Bing HTML 抓取；仅显式开启时才进入运行链路
+    allow_html_search: bool = field(
+        default_factory=lambda: _get("ALLOW_HTML_SEARCH", "").lower() in {"1", "true", "yes"}
+    )
 
 
 @dataclass(frozen=True)

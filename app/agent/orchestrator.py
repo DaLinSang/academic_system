@@ -174,10 +174,9 @@ class Orchestrator:
         # 2) 路由
         route = self._decide_route(state, enable_routing)
 
-        # B1: explicit single-document summary bypasses Top-K retrieval.  The
-        # retriever still owns parsing/caching; the generator only receives the
-        # persisted full text for this request.
-        if enable_retrieval and self._is_full_document_request(question):
+        # 单篇文档总结：只有 summary 意图 + 唯一目标文件才加载全文（方案 §3.5）。
+        # 普通 RAG 问答（含"分析/内容"等词）仍走证据检索与页码引用，不误触发。
+        if enable_retrieval and self._is_full_document_request(question, self._indexed_document_names()):
             self._load_full_document(state)
 
         # 3) 规划
@@ -250,34 +249,41 @@ class Orchestrator:
     # 各阶段
     # ------------------------------------------------------------------ #
     @staticmethod
-    def _is_full_document_request(question: str) -> bool:
-        return bool(re.search(
-            r"(?:总结|概括|分析|梳理|内容|讲了什么|全文|overview|summari[sz]e|analy[sz]e)",
-            question, re.I,
-        ))
+    def _is_full_document_request(question: str, indexed_names: list[str] | None = None) -> bool:
+        """方案 §3.5：只有 summary 意图且目标文档唯一才走全文总结。
+
+        替换 B 的宽泛关键词匹配——"分析""内容"这类词不该把普通 RAG 问答
+        （如"RAG 有什么优势"）误判为全文总结。
+        """
+        from app.agent.document_intent import should_summarize
+
+        return should_summarize(question, indexed_names)
+
+    def _indexed_document_names(self) -> list[str]:
+        listed = getattr(self.retriever, "list_indexed_documents", None)
+        if not callable(listed):
+            return []
+        try:
+            docs = listed()
+            return [str(d["file_name"]) for d in docs if isinstance(d, dict) and d.get("file_name")]
+        except Exception:  # noqa: BLE001 - 列目录失败不影响主流程
+            return []
 
     def _load_full_document(self, state: AgentState) -> None:
+        from app.agent.document_intent import requested_document
+
         reader = getattr(self.retriever, "read_document", None)
         if not callable(reader):
             return
-        names = re.findall(r"[\w.-]+\.pdf\b", state.question, re.I)
-        if not names:
-            listed = getattr(self.retriever, "list_indexed_documents", None)
-            if callable(listed):
-                try:
-                    docs = listed()
-                    if len(docs) == 1:
-                        names = [str(docs[0]["file_name"])]
-                except Exception as exc:  # noqa: BLE001
-                    state.log("document_read", "error", error=str(exc))
-        if len(names) != 1:
+        file_name = requested_document(state.question, self._indexed_document_names())
+        if not file_name:
             return
         try:
-            state.document_text = reader(names[0])
-            state.document_file_name = names[0]
-            state.log("document_read", "end", file_name=names[0], chars=len(state.document_text))
+            state.document_text = reader(file_name)
+            state.document_file_name = file_name
+            state.log("document_read", "end", file_name=file_name, chars=len(state.document_text))
         except Exception as exc:  # noqa: BLE001
-            state.log("document_read", "error", error=str(exc), file_name=names[0])
+            state.log("document_read", "error", error=str(exc), file_name=file_name)
 
     @staticmethod
     def _history_kw(state: AgentState) -> dict[str, list[ConversationTurn]]:
@@ -590,12 +596,68 @@ class Orchestrator:
                 degraded_queries=[str(d["query"]) for d in degradations],
             )
 
+    def _supplement_evidence_for_summary(self, state: AgentState) -> None:
+        """回答后检索（方案 §4.6）：为全文总结的事实句补回带页码证据。
+
+        保守设计：
+        - 只对明确指定单篇文档的总结路径生效；
+        - 最多 5 句、每句 top_k=3，控制 RQ4 成本；
+        - 通过鸭子类型调用 retriever.retrieve，不依赖 B 尚未交付的
+          retrieve_for_claim 接口；接口到位后可平滑替换。
+        """
+        retrieve = getattr(self.retriever, "retrieve", None)
+        file_name = state.document_file_name
+        if not callable(retrieve) or not file_name:
+            state.log("post_hoc_retrieval", "skip", reason="no_scoped_retriever")
+            return
+
+        # 从回答里抽事实句：跳过标题/列表符号/来源行，保留有主体的句子
+        sentences = [
+            s.strip() for s in re.split(r"[。！？\n]+", state.draft_answer)
+            if len(s.strip()) >= 12 and not s.strip().startswith(("#", "-", "*", "[", "来源", "图", "表"))
+        ][:5]
+        if not sentences:
+            state.log("post_hoc_retrieval", "skip", reason="no_factual_sentences")
+            return
+
+        collected: list[object] = []
+        seen_ids: set[str] = set()
+        for sentence in sentences:
+            try:
+                # B 的 retrieve 目前不支持 file_names；先尝试 scoped 接口，
+                # 没有就退回普通检索并只保留目标文件的证据（防跨文件串证据）。
+                scoped = getattr(self.retriever, "retrieve_for_claim", None)
+                if callable(scoped):
+                    found = scoped(sentence, [file_name], top_k=3)
+                else:
+                    found = retrieve(sentence, top_k=3)
+                    found = [e for e in found if getattr(e, "file_name", None) == file_name]
+            except Exception as exc:  # noqa: BLE001
+                state.log("post_hoc_retrieval", "error", error=type(exc).__name__)
+                continue
+            for evidence in found:
+                chunk_id = getattr(evidence, "chunk_id", "")
+                if chunk_id and chunk_id not in seen_ids:
+                    seen_ids.add(chunk_id)
+                    collected.append(evidence)
+
+        if collected:
+            state.add_evidence(collected)
+        state.log(
+            "post_hoc_retrieval", "end",
+            sentences=len(sentences), evidence=len(collected), file_name=file_name,
+        )
+
     def _run_verification(self, state: AgentState) -> None:
         with self._stage(state, "verify") as ok:
             if not ok:
                 # 校验器崩溃时不能让整个请求失败：降级为"未校验"
                 state.log("verify", "skip", reason="verifier unavailable")
                 return
+            # 方案 §4.6：全文总结路径原本没有 evidence → 校验会整段跳过。
+            # 这里按回答中的事实句回查原文档，补出带页码的 Evidence 再校验。
+            if state.document_text and not state.evidence:
+                self._supplement_evidence_for_summary(state)
             if not state.evidence:
                 state.claims = []
                 state.log(

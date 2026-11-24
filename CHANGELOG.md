@@ -15,6 +15,8 @@
 
 ### Added
 
+- `app/agent/document_summary.py` / `document_intent.py`：PDF 分层总结与 summary/qa/comparison 意图识别（方案 §3/§8.1）
+- 测试 `tests/test_document_summary_56.py`（10 项）：意图、分段、分层总结、usage、prompt 约束
 - `scripts/check_experiment_ready.py`：正式实验就绪检查（LLM/DB/embedding/数据集引用PDF/冻结标记）（Issue #49）
 - 测试 `tests/test_chapter_constraint_99.py`（7 项）：Chapter 变体/多章节/去重/无指代不误伤、B 端正则兼容（Issue #99）
 - 测试 `tests/test_chapter_constraint_99.py`（7 项）：Chapter 变体/多章节/去重/无指代不误伤、B 端正则兼容（Issue #99）
@@ -106,6 +108,8 @@
 
 ### Changed
 
+- `app/agent/answer_generator.py` / `orchestrator.py`：大 PDF 走分层总结（不再降级 Top-K）；回答后按事实句补检索再校验（方案 §4.6）
+- `app/agent/factory.py` / `config.py`：默认只启用 Tavily API，停用 DDG/Bing HTML（ALLOW_HTML_SEARCH=1 才启用）
 - `app/agent/orchestrator.py::_enrich_query`：Planner 子查询补回 Chapter 章节约束（Issue #99，#64 同做法）
 - `app/agent/orchestrator.py::_enrich_query`：Planner 子查询补回 Chapter 章节约束（Issue #99，#64 同做法）
 - `app/agent/factory.py`：Tavily 配 key 但失败/空结果时自动回退 WebSearchTool；web trace 单列 search_backend/search_credits，不混同 LLM token cost（Issue #96）
