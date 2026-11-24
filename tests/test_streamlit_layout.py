@@ -25,3 +25,17 @@ def test_chat_layout_exposes_session_list_right_rail_and_input() -> None:
     assert not any(selectbox.label == "当前会话" for selectbox in app.selectbox)
     assert not any(expander.label == "设置" for expander in app.expander)
     assert not any(expander.label == "长期记忆" for expander in app.expander)
+
+
+def test_opening_memory_dialog_does_not_reset_real_runtime() -> None:
+    app = AppTest.from_file(APP_PATH, default_timeout=20).run()
+
+    next(button for button in app.button if button.label == "设置").click().run()
+    app.radio[0].set_value("Real").run()
+    assert app.session_state["runtime"] == "Real"
+
+    next(button for button in app.button if button.label == "长期记忆").click().run()
+    assert app.session_state["runtime"] == "Real"
+
+    next(button for button in app.button if button.label == "设置").click().run()
+    assert app.radio[0].value == "Real"

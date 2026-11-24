@@ -341,6 +341,38 @@ def _sync_mode_flags() -> None:
     st.session_state.enable_verification = preset["enable_verification"]
 
 
+_DIALOG_SETTING_KEYS = {
+    "_settings_user_id": "user_id",
+    "_settings_runtime": "runtime",
+    "_settings_evaluation_mode": "evaluation_mode",
+    "_settings_top_k": "top_k",
+    "_settings_enable_memory": "enable_memory",
+    "_settings_enable_verification": "enable_verification",
+}
+
+
+def _prepare_settings_dialog() -> None:
+    """Copy persistent configuration into temporary dialog widget keys."""
+    for widget_key, setting_key in _DIALOG_SETTING_KEYS.items():
+        st.session_state[widget_key] = st.session_state[setting_key]
+
+
+def _persist_settings_dialog() -> None:
+    """Keep settings after Streamlit removes closed-dialog widget state."""
+    for widget_key, setting_key in _DIALOG_SETTING_KEYS.items():
+        if widget_key in st.session_state:
+            st.session_state[setting_key] = st.session_state[widget_key]
+
+
+def _persist_dialog_mode() -> None:
+    _persist_settings_dialog()
+    _sync_mode_flags()
+    st.session_state._settings_enable_memory = st.session_state.enable_memory
+    st.session_state._settings_enable_verification = (
+        st.session_state.enable_verification
+    )
+
+
 def _build_orchestrator(runtime: str, top_k: int):
     if runtime == "Real":
         return build_stage1_orchestrator(top_k=top_k)
@@ -863,17 +895,39 @@ def _render_session_sidebar(
 
 @st.dialog("设置")
 def _settings_dialog() -> None:
-    st.text_input("用户 ID", key="user_id")
-    st.radio("运行链路", ["Mock", "Real"], horizontal=True, key="runtime")
+    st.text_input(
+        "用户 ID", key="_settings_user_id", on_change=_persist_settings_dialog
+    )
+    st.radio(
+        "运行链路",
+        ["Mock", "Real"],
+        horizontal=True,
+        key="_settings_runtime",
+        on_change=_persist_settings_dialog,
+    )
     st.selectbox(
         "评测模式",
         sorted(MODE_PRESETS),
-        key="evaluation_mode",
-        on_change=_sync_mode_flags,
+        key="_settings_evaluation_mode",
+        on_change=_persist_dialog_mode,
     )
-    st.slider("检索 Top-K", 1, 10, key="top_k")
-    st.checkbox("长期记忆", key="enable_memory")
-    st.checkbox("Claim Verification", key="enable_verification")
+    st.slider(
+        "检索 Top-K",
+        1,
+        10,
+        key="_settings_top_k",
+        on_change=_persist_settings_dialog,
+    )
+    st.checkbox(
+        "长期记忆",
+        key="_settings_enable_memory",
+        on_change=_persist_settings_dialog,
+    )
+    st.checkbox(
+        "Claim Verification",
+        key="_settings_enable_verification",
+        on_change=_persist_settings_dialog,
+    )
 
 
 @st.dialog("长期记忆", width="large")
@@ -933,6 +987,7 @@ def main() -> None:
         settings_col, memory_col = st.columns([1, 1.25], gap="small")
         with settings_col:
             if st.button("设置", icon=":material/settings:", use_container_width=True):
+                _prepare_settings_dialog()
                 _settings_dialog()
         with memory_col:
             if st.button(
