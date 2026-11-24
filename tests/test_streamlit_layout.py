@@ -69,3 +69,40 @@ def test_claim_divider_recognises_numbered_missing_information_heading() -> None
 
     assert body.endswith("正常回答。")
     assert feedback.startswith("5. **缺少的信息**")
+
+
+def test_claim_divider_splits_before_insufficient_material_section() -> None:
+    body, feedback = _split_answer_sections(
+        "5. 不同记忆组件的关系\n\n正常回答内容 [6]。\n\n"
+        "**现有资料不足以回答的部分**：\n\n"
+        "- 证据未提供该讲义的完整大纲。\n"
+        "- 证据未涉及其他核心模块。"
+    )
+
+    assert body.endswith("正常回答内容 [6]。")
+    assert feedback.startswith("**现有资料不足以回答的部分**：")
+    assert "完整大纲" in feedback
+
+
+def test_claim_divider_does_not_split_inline_insufficient_material_text() -> None:
+    answer = "根据现有资料不足以回答全部问题，但可以说明已知内容。"
+
+    assert _split_answer_sections(answer) == (answer, "")
+
+
+def test_claim_divider_recognises_short_insufficient_material_heading() -> None:
+    body, feedback = _split_answer_sections(
+        "正常回答。\n\n资料不足的部分：\n- 缺少课程评估方式。"
+    )
+
+    assert body == "正常回答。"
+    assert feedback.startswith("资料不足的部分：")
+
+
+def test_claim_divider_recognises_unanswerable_evidence_heading() -> None:
+    body, feedback = _split_answer_sections(
+        "正常回答。\n\n**无法根据现有证据回答的部分**：\n- 缺少完整目录。"
+    )
+
+    assert body == "正常回答。"
+    assert feedback.startswith("**无法根据现有证据回答的部分**：")
