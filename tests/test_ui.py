@@ -174,6 +174,7 @@ def test_persisted_index_survives_missing_session_attempt() -> None:
         (ClaimStatus.SUPPORTED, "success", "有证据支持"),
         (ClaimStatus.PARTIALLY_SUPPORTED, "warning", "部分支持"),
         (ClaimStatus.UNSUPPORTED, "error", "证据不支持"),
+        (ClaimStatus.UNVERIFIED, "warning", "未能确认"),
     ],
 )
 def test_claim_presentations_maps_status_colors(status, level, label) -> None:
@@ -267,6 +268,25 @@ def test_unverified_claim_uses_neutral_warning_copy() -> None:
     assert row["label"] == "未能确认"
     assert row["note"] == "conflicting evidence"
     assert "非事实正确概率" in row["score_label"]
+
+
+def test_explicit_unverified_claim_uses_neutral_warning_copy() -> None:
+    state = AgentState(question="q")
+    state.claims = [
+        ClaimCheck(
+            claim="claim beyond verification budget",
+            status=ClaimStatus.UNVERIFIED,
+            confidence=0,
+            note="未检索证据（超出本轮校验预算）",
+        )
+    ]
+
+    row = claim_presentations(state)[0]
+
+    assert row["status"] == "unverified"
+    assert row["level"] == "warning"
+    assert row["label"] == "未能确认"
+    assert row["note"] == "未检索证据（超出本轮校验预算）"
 
 
 def test_direct_without_evidence_has_unverified_notice() -> None:

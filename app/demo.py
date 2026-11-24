@@ -65,6 +65,7 @@ _STATUS_STYLE = {
     ClaimStatus.SUPPORTED: green,
     ClaimStatus.PARTIALLY_SUPPORTED: yellow,
     ClaimStatus.UNSUPPORTED: red,
+    ClaimStatus.UNVERIFIED: yellow,
 }
 
 
