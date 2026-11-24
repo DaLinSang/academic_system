@@ -6,12 +6,14 @@
 ### Final document paths
 
 - `retrieve(query, top_k=...)`: BM25 + pgvector + RRF evidence retrieval with page metadata.
+- `retrieve_for_claim(claim, [file_name], top_k=3)`: verify one claim against only the named indexed PDF(s). The file filter is applied before BM25 ranking and inside the vector query; an unknown file returns no evidence with `last_warning`.
 - `read_document(file_name)`: persisted OCR/parsed page text for a named PDF summary, without Top-K truncation.
 - `delete_document(file_name)`: removes the file's chunks, vectors and page-text cache together.
 
 Page text is rebuilt from chunk character offsets so overlapping chunk windows do not duplicate sentences in a summary. The returned text includes `[Page N]` boundaries. Deletion clears the current in-memory BM25 index; other running app processes must reload their own in-memory corpus. The original PDF file on disk is managed by the uploader and is not deleted by this database interface.
 
 See `docs/pr-b-document-summary-final.md` for the complete handoff, OCR setup and verification flow.
+For A's post-answer claim verification handoff, see `docs/pr-b-scoped-claim-retrieval.md`.
 
 ## 1. 最终检索流程
 
