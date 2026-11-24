@@ -24,13 +24,16 @@ AMBIGUOUS = "__AMBIGUOUS__"
 
 _SUMMARY_RE = re.compile(
     r"(?:总结|概括|梳理|概述|全文总结|讲了什么|主要讲了|内容概要"
-    r"|整理|复习提纲|提纲|归纳"
-    r"|overview|summari[sz]e|by way of summary)", re.I,
+    r"|讲讲|讲一下|讲一讲|说一说|说说|介绍一下|介绍下|讲讲这篇"
+    r"|整理|复习提纲|提纲|归纳|通读|通篇"
+    r"|overview|summari[sz]e|walk me through|tell me about|by way of summary)", re.I,
 )
 _COMPARE_RE = re.compile(r"(?:比较|对比|区别|异同|compare|comparison|versus|\bvs\b)", re.I)
 _PDF_RE = re.compile(r"[\w.-]+\.pdf\b", re.I)
 _DEICTIC_RE = re.compile(
-    r"(?:这个文档|这份文档|这篇论文|这个文件|该文件|本文件|this document|this paper)", re.I
+    r"(?:这个文档|这份文档|这篇论文|这篇文章|这篇文档|这个文件|这份材料"
+    r"|该文件|本文件|上面这个|刚才那个"
+    r"|this document|this paper|this article|this file|it)", re.I
 )
 
 

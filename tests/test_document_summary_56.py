@@ -210,3 +210,19 @@ def test_no_scoped_retriever_degrades_without_fake_evidence():
     assert orch._supplement_evidence_for_summary(state) is False
     assert any(e.stage == "post_hoc_retrieval" and e.detail.get("reason") == "no_scoped_retriever"
                for e in state.trace)
+
+
+def test_colloquial_teach_me_about_this_article():
+    """用户原话边界：'给我讲讲这篇文章' 必须识别为通读全文总结。"""
+    from app.agent.document_intent import (
+        AMBIGUOUS,
+        document_task,
+        requested_document,
+        should_summarize,
+    )
+    many = ["rag_paper.pdf", "comp7608_lecture_agent.pdf"]
+    for q in ["给我讲讲这篇文章", "讲讲这篇文章", "介绍一下这个文档", "这篇文章讲了什么"]:
+        assert document_task(q) == "summary", q
+        assert requested_document(q, many, None) == AMBIGUOUS, q
+        assert requested_document(q, many, "rag_paper.pdf") == "rag_paper.pdf", q
+        assert should_summarize(q, many, "rag_paper.pdf"), q
