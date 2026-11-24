@@ -24,6 +24,7 @@ _STATUS_VIEW = {
     ClaimStatus.SUPPORTED: ("supported", "success", "有证据支持"),
     ClaimStatus.PARTIALLY_SUPPORTED: ("partially_supported", "warning", "部分支持"),
     ClaimStatus.UNSUPPORTED: ("unsupported", "error", "证据不支持"),
+    ClaimStatus.UNVERIFIED: ("unverified", "warning", "未能确认"),
 }
 
 
@@ -263,7 +264,9 @@ def answer_panel_summary(state: AgentState) -> dict[str, int]:
         for check in state.claims
     )
     unverified = sum(
-        (check.note or "").startswith("UNVERIFIED:") for check in state.claims
+        check.status == ClaimStatus.UNVERIFIED
+        or (check.note or "").startswith("UNVERIFIED:")
+        for check in state.claims
     )
     return {
         "citations": len(citations),
@@ -485,7 +488,7 @@ def claim_presentations(state: AgentState) -> list[dict[str, Any]]:
     for check in state.claims:
         status, level, label = _STATUS_VIEW[check.status]
         note = check.note or ""
-        if note.startswith("UNVERIFIED:"):
+        if check.status == ClaimStatus.UNVERIFIED or note.startswith("UNVERIFIED:"):
             level, label = "warning", "未能确认"
             note = note.removeprefix("UNVERIFIED:").strip()
         lexical = "LEXICAL_SCORE:" in note or "lexical fallback" in note
