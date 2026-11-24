@@ -1,5 +1,18 @@
 # Member C Progress
 
+## 2026-11-24 最终集成跟进
+
+- PR #107、#108、#109、#110、#111 已按顺序进入 `main`。C 的 Claim
+  切分、字符 offset、学术聊天 UI、长期记忆弹窗和文档删除功能均保留。
+- “缺少证据的部分”“现有资料不足以回答的部分”“资料不足的部分”及同类
+  独立标题统一放到回答/Claim 分割线下；正文内普通“资料不足”句子不会误切。
+- Issue #112 的 C 侧双上传入口已完成：右侧上传进入知识库；聊天框“＋ 临时
+  PDF”只解析到当前用户和会话的内存，不调用 `index_document()`。
+- 临时 PDF 随问题传入 PR #111 新增的 `attached_document_text` /
+  `attached_document_file_name`，回答区明确标注“对话内文档、未写入知识库”。
+- 临时附件支持显式移除，并通过会话级 key 防止切换会话后文档串用。
+- 关键 UI/附件测试、完整 pytest、Ruff 和 `git diff --check` 均通过。
+
 更新日期：2026-11-24
 
 当前开发分支：`feat/c-claim-context-rules`
