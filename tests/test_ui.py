@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 from pypdf import PdfWriter
 
@@ -480,7 +482,12 @@ def test_session_navigation_items_preserve_order_summary_and_selection() -> None
     assert [row["session_id"] for row in rows] == ["recent", "renamed-topic"]
     assert rows[0]["selected"] is True
     assert rows[0]["summary"] == "Summarise the RAG paper"
-    assert rows[0]["timestamp"] == "2026-11-22 08:30"
+    expected_local = (
+        datetime.fromisoformat("2026-11-22T08:30:00+00:00")
+        .astimezone()
+        .strftime("%Y-%m-%d %H:%M")
+    )
+    assert rows[0]["timestamp"] == expected_local
     assert rows[1]["summary"] == "renamed-topic"
 
     generated = session_navigation_items(
@@ -488,6 +495,24 @@ def test_session_navigation_items_preserve_order_summary_and_selection() -> None
         "chat-ab12cd34",
     )
     assert generated[0]["summary"] == "新会话"
+
+
+def test_session_navigation_items_accept_zulu_and_legacy_timestamps() -> None:
+    rows = session_navigation_items(
+        [
+            {"session_id": "zulu", "last_at": "2026-11-24T14:53:00Z"},
+            {"session_id": "legacy", "last_at": "2026-11-24 14:53"},
+        ],
+        "zulu",
+    )
+
+    expected_local = (
+        datetime.fromisoformat("2026-11-24T14:53:00+00:00")
+        .astimezone()
+        .strftime("%Y-%m-%d %H:%M")
+    )
+    assert rows[0]["timestamp"] == expected_local
+    assert rows[1]["timestamp"] == "2026-11-24 14:53"
 
 
 def test_answer_panel_summary_counts_visible_attention_states() -> None:

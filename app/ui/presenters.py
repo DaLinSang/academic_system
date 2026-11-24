@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -242,7 +243,19 @@ def session_navigation_items(
         else:
             summary = session_id
         last_at = str(item.get("last_at") or "")
-        timestamp = last_at[:16].replace("T", " ") if last_at else ""
+        timestamp = ""
+        if last_at:
+            try:
+                # Storage stays in UTC; the sidebar should show the machine's
+                # local wall-clock time instead of slicing the UTC string.
+                timestamp = (
+                    datetime.fromisoformat(last_at.replace("Z", "+00:00"))
+                    .astimezone()
+                    .strftime("%Y-%m-%d %H:%M")
+                )
+            except ValueError:
+                # Older records may already contain a display-ready value.
+                timestamp = last_at[:16].replace("T", " ")
         rows.append(
             {
                 "session_id": session_id,
