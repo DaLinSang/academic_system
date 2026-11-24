@@ -429,6 +429,11 @@ class AgentState(_Base):
     # 会议方案 §4.3：当前会话最近上传/选中的 PDF（UI 传入）。
     # "总结这个文档"等指代用它消解；新建会话清空、切换会话由 UI 恢复。
     active_document_file_name: str | None = None
+    # 对话内临时文档全文（对话框 + 号上传，不进 RAG 知识库）。
+    # 由 UI 在上传时解析成带页码文本、存在 session_state，发送时随问题传入。
+    # 有值时通读链路直接用它，不查数据库 document_pages。
+    attached_document_text: str = ""
+    attached_document_file_name: str | None = None
     turn_index: int = 0
     # 上一轮的问答。由调用方传入；为空时行为与此前完全一致（单轮）。
     # 只放简短历史，完整记录由 SessionStore 负责，不塞进 AgentState。

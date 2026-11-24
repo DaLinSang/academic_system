@@ -15,6 +15,9 @@
 
 ### Added
 
+- `AgentState.attached_document_text/attached_document_file_name` + `Orchestrator.run` 参数：对话内临时文档（不进 RAG），直接通读全文回答（Issue #111）
+- `docs/handoff-c-conversation-upload.md`：给 C 的双上传入口 UI 改造交接说明
+- 测试 `tests/test_attached_document_111.py`（5 项）：不查库、任意问题针对附件、分段证据、端到端、无附件回归
 - `AgentState.active_document_file_name` + Orchestrator.run 参数：支持"总结这个文档"指代，多 PDF 要求选择（方案 §4.3/§4.4）
 - `app/agent/document_summary.py` / `document_intent.py`：PDF 分层总结与 summary/qa/comparison 意图识别（方案 §3/§8.1）
 - 测试 `tests/test_document_summary_56.py`（10 项）：意图、分段、分层总结、usage、prompt 约束
@@ -109,6 +112,7 @@
 
 ### Changed
 
+- 通读链路优先用传入的对话内全文；Claim 校验用全文分段构造证据（source=attached_text），不伪装成知识库检索（Issue #111）
 - `ClaimStatus` 加 `UNVERIFIED`：未检索/校验不可用时不冒充 unsupported（会议方案 §4.7/§5）
 - `app/agent/answer_generator.py` / `orchestrator.py`：大 PDF 走分层总结（不再降级 Top-K）；回答后按事实句补检索再校验（方案 §4.6）
 - `app/agent/factory.py` / `config.py`：默认只启用 Tavily API，停用 DDG/Bing HTML（ALLOW_HTML_SEARCH=1 才启用）
