@@ -330,12 +330,17 @@ class HybridRetriever:
         except Exception as exc:
             raise RetrievalError(f"Vector retrieval failed: {exc}") from exc
 
-    def _retrieve_documents(self, query: str, names: list[str], top_k: int) -> list[Evidence]:
+    def _retrieve_documents(
+        self, query: str, names: list[str], top_k: int, *, overview: bool | None = None
+    ) -> list[Evidence]:
         """Bounded, source-scoped overview retrieval; never mix other PDFs."""
         query = expand_field_query(query)
         chunks = [c for c in self._bm25._chunks if c.file_name in names]
         scoped = BM25Retriever(chunks)
-        overview = bool(re.search(r"总结|概括|综述|主要结论|研究目标|summari[sz]|overview", query, re.I))
+        if overview is None:
+            overview = bool(re.search(
+                r"总结|概括|综述|主要结论|研究目标|summari[sz]|overview", query, re.I
+            ))
         queries = [query]
         if overview:
             queries += ["abstract introduction motivation objective 研究目标",
@@ -520,6 +525,34 @@ class HybridRetriever:
         for rank in range(max((len(items) for items in chosen.values()), default=0)):
             result.extend(items[rank] for items in chosen.values() if rank < len(items))
         return result[:top_k]
+
+    def retrieve_for_claim(
+        self, claim: str, file_names: list[str], top_k: int = 3
+    ) -> list[Evidence]:
+        """Find evidence for a claim exclusively in the named, indexed PDFs.
+
+        Scope is applied before BM25 ranking and in the vector SQL query. An
+        unknown name returns no evidence rather than falling back to the
+        global corpus, even when another document contains a better match.
+        """
+        self.last_warning = None
+        self.last_clarification = None
+        if top_k <= 0 or not _tokenize(claim):
+            return []
+        if not isinstance(file_names, list) or not file_names or any(
+            not isinstance(name, str) or not name for name in file_names
+        ):
+            raise ValueError("file_names must be a nonempty list of PDF file names")
+
+        self._load_bm25_index()
+        available = {chunk.file_name for chunk in self._bm25._chunks}
+        missing = sorted(set(file_names) - available)
+        if missing:
+            self.last_warning = f"PDF not indexed: {', '.join(missing)}"
+            return []
+        return self._retrieve_documents(
+            claim, list(dict.fromkeys(file_names)), top_k, overview=False
+        )
 
     def retrieve(self, query: str, top_k: int = 5) -> list[Evidence]:
         """Return BM25 and vector results fused with reciprocal rank fusion."""
